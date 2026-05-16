@@ -7,66 +7,31 @@
 }:
 let
   cfg = config.setup-secrets;
-  vars = {
-    records_sh = lib.escapeShellArg (
-      pkgs.fetchzip {
-        name = "records.sh";
-        version = "1.0.3";
-        url = "https://github.com/orbit-online/records.sh/releases/download/v1.0.3/records.sh.tar.gz";
-        hash = "sha256-A3d3OolMGOv08PqdxzUbx65Y3lIpmonns4xzg+kuW9k=";
-        stripRoot = false;
-      }
-    );
-    docopt_sh = lib.escapeShellArg (
-      pkgs.fetchzip {
-        name = "docopt.sh";
-        version = "2.0.3";
-        url = "https://github.com/andsens/docopt.sh/releases/download/v2.0.3/docopt-lib.sh.tar.gz";
-        hash = "sha256-L0J6aFgEcPPJnoJD6oZwtnAzGIB1R5cdZz6R7Ez5zcc=";
-        stripRoot = false;
-      }
-    );
-    PATH =
-      with pkgs;
-      lib.makeBinPath [
-        bash
-        coreutils
-        dialog
-      ];
-    fetch = lib.join "\n" (
-      lib.mapAttrsToList (
-        name:
-        { description, cmd }:
-        lib.join " " (
-          map lib.escapeShellArg [
-            name
-            description
-            cmd
-          ]
-        )
-      ) cfg.fetch
-    );
-    store = lib.join "\n" (
-      map (
-        { logEntry, cmd }:
-        lib.join " " (
-          map lib.escapeShellArg [
-            logEntry
-            cmd
-          ]
-        )
-      ) cfg.store
-    );
+  nixos-setup-secrets = pkgs.buildGo126Module {
+    name = "nixos-setup-secrets";
+    # version = "0.7.0";
+    meta.mainProgram = "nixos-setup-secrets";
+    src = ./src;
+    proxyVendor = true;
+    vendorHash = "sha256-OkAoJ3ysAK9tW69S7HeYPnhrkQL9JgHKHOQoYwQL6yc=";
   };
-  setup-secrets = pkgs.writeShellScriptBin "setup-secrets" (
-    builtins.readFile (pkgs.replaceVars ./setup-secrets.sh vars)
-  );
+  nixos-setup-secrets-wrapper = pkgs.writeShellScriptBin "setup-secrets" ''
+    PATH=${pkgs.lib.makeBinPath pkgs.bash}
+    export NIXOS_SETUP_SECRETS_CONFIG=$(cat <<'EOF'
+    ${builtins.toJSON {
+      sources = cfg.sources;
+      destinations = cfg.destinations;
+    }}
+    EOF
+    )
+    exec ${lib.getExe nixos-setup-secrets} "$@"
+  '';
 in
 {
   options.setup-secrets = {
     enable = lib.mkEnableOption "the cli utility for setting up secrets";
     autoSetup = lib.mkEnableOption "automatic fetching & storing of secrets";
-    fetch = lib.mkOption {
+    sources = lib.mkOption {
       description = "Map of secrets. <name> becomes the secret name.";
       type = lib.types.attrsOf (
         lib.types.submodule (
@@ -79,29 +44,39 @@ in
                 default = name;
               };
               cmd = lib.mkOption {
-                type = lib.types.str;
+                type = lib.types.nullOr lib.types.str;
                 description = "Command to retrieve the secret";
-                default = [ ];
+                default = null;
               };
             };
           }
         )
       );
     };
-    store = lib.mkOption {
+    destinations = lib.mkOption {
       description = "List of commands to run when the form is submitted.";
       type = lib.types.listOf (
         lib.types.submodule {
           options = {
-            logEntry = lib.mkOption {
-              description = "A description what the store command is doing.";
+            enable = lib.mkEnableOption "this secret destination";
+            logPrefix = lib.mkOption {
+              description = "A short description of the destination.";
               type = lib.types.str;
               default = "";
             };
+            requires = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              description = "List of secrets this command requires in order to execute";
+              default = [ ];
+            };
+            wants = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              description = "List of secrets this command wants (but not requires)";
+              default = [ ];
+            };
             cmd = lib.mkOption {
               type = lib.types.str;
-              description = "Command to store the secrets";
-              default = [ ];
+              description = "Command to create or update the secret";
             };
           };
         }
@@ -111,10 +86,22 @@ in
       description = "The generated setup-secrets script";
       type = lib.types.package;
       readOnly = true;
-      default = setup-secrets;
+      default = nixos-setup-secrets-wrapper;
     };
   };
   config = {
+    assertions = lib.flatten (
+      map (
+        dest:
+        map (src: {
+          assertion = builtins.elem src (builtins.attrNames cfg.sources);
+          message = ''
+            setup-secrets.destinations with logEntry \"${dest.logEntry}\" requires a secret source that is not defined: ${src}
+            A secret source need not have a command set, but it must be defined.
+          '';
+        }) dest.requires
+      ) (lib.filter ({ enable, ... }: enable) cfg.destinations)
+    );
     systemd.services."setup-secrets" = {
       enable = cfg.autoSetup;
       description = "Automatically fetch & store NixOS secrets";

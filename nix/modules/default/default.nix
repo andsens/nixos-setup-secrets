@@ -1,4 +1,4 @@
-{ self, ... }:
+{ self, inputs, ... }@moduleArgs:
 {
   config,
   pkgs,
@@ -89,6 +89,7 @@ in
       default = nixos-setup-secrets-wrapper;
     };
   };
+  imports = [ (import ./users.nix moduleArgs) ];
   config = {
     assertions = lib.flatten (
       map (

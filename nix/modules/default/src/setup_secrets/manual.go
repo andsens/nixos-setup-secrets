@@ -1,6 +1,7 @@
 package setup_secrets
 
 import (
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
@@ -13,33 +14,23 @@ func SetupManual(config *Config) error {
 }
 
 func fetchSecrets(app *tview.Application, config *Config) {
-	root := tview.NewGrid().SetRows(0, 1).SetColumns(5)
-	root.SetBorder(true).SetTitle("Fetching secrets")
 	logs := tview.NewTextView()
 	logs.SetChangedFunc(func() {
 		app.Draw()
 		logs.ScrollToEnd()
-	})
-	root.AddItem(logs, 0, 0, 1, 5, 0, 0, false)
-	next := tview.NewButton("Next").SetDisabled(true).SetSelectedFunc(func() {
+	}).SetBorder(true).SetTitle("Fetching secrets")
+	app.SetRoot(logs, true)
+	config.fetch(logs)
+	logs.Write([]byte("Done. Press <ENTER> to continue."))
+	logs.SetDoneFunc(func(key tcell.Key) {
 		go editSecrets(app, config)
 	})
-	root.AddItem(next, 1, 3, 1, 1, 0, 0, true)
-
-	app.SetRoot(root, true)
-	config.fetch(logs)
-	logs.Write([]byte("Done"))
-	next.SetDisabled(false)
 	app.Draw()
 }
 
 func editSecrets(app *tview.Application, config *Config) {
-	root := tview.NewGrid().SetRows(0, 1).SetColumns(5)
-	root.SetBorder(true).SetTitle("Fetching secrets")
 	form := tview.NewForm()
-	root.AddItem(form, 0, 0, 1, 5, 0, 0, false)
-	save := tview.NewButton("Save")
-	root.AddItem(save, 1, 3, 1, 1, 0, 0, true)
+	form.SetBorder(true).SetTitle("Fetching secrets")
 	var inputFields []*tview.InputField
 	for name, src := range config.Sources {
 		var val string
@@ -64,27 +55,22 @@ func editSecrets(app *tview.Application, config *Config) {
 			}
 		}
 	})
-	save.SetSelectedFunc(func() {
+	form.AddButton("Save", func() {
 		go storeSecrets(app, config)
 	})
-	app.SetRoot(root, true)
+	app.SetRoot(form, true)
 	app.Draw()
 }
 
 func storeSecrets(app *tview.Application, config *Config) {
-	root := tview.NewGrid().SetRows(0, 1).SetColumns(5)
-	root.SetBorder(true).SetTitle("Saving secrets")
 	logs := tview.NewTextView()
 	logs.SetChangedFunc(func() {
 		app.Draw()
 		logs.ScrollToEnd()
-	})
-	root.AddItem(logs, 0, 0, 1, 5, 0, 0, false)
-	exit := tview.NewButton("Exit").SetDisabled(true).SetSelectedFunc(app.Stop)
-	root.AddItem(exit, 1, 3, 1, 1, 0, 0, true)
-	app.SetRoot(root, true)
+	}).SetBorder(true).SetTitle("Saving secrets")
+	app.SetRoot(logs, true)
 	config.store(logs)
-	logs.Write([]byte("Done"))
-	exit.SetDisabled(false)
+	logs.Write([]byte("Done. Press <ESC> to exit."))
+	logs.SetDoneFunc(func(key tcell.Key) { app.Stop() })
 	app.Draw()
 }

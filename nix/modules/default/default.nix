@@ -111,5 +111,9 @@ in
         ExecStart = "${lib.getExe cfg.script} --auto";
       };
     };
+    system.activationScripts.setup-secrets = lib.mkIf cfg.autoSetup {
+      text = "${lib.getExe nixos-setup-secrets-wrapper} --auto";
+    };
+
   };
 }

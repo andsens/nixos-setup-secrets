@@ -76,6 +76,7 @@ func (config *Config) fetch(log io.Writer) {
 		var val []byte
 		if val, err = cmd.Output(); err != nil {
 			fmt.Fprintf(log, "%s\n", fmt.Errorf("%s: Fetching secret failed: %w\n", name, err).Error())
+			continue
 		}
 		value := strings.TrimSpace(string(val))
 		src.Value = &value

@@ -1,4 +1,3 @@
-{ self, inputs, ... }@moduleArgs:
 {
   config,
   pkgs,
@@ -16,7 +15,7 @@ let
     vendorHash = "sha256-OkAoJ3ysAK9tW69S7HeYPnhrkQL9JgHKHOQoYwQL6yc=";
   };
   nixos-setup-secrets-wrapper = pkgs.writeShellScriptBin "setup-secrets" ''
-    PATH=${pkgs.lib.makeBinPath pkgs.bash}
+    PATH=${pkgs.lib.makeBinPath [ pkgs.bash ]}
     export NIXOS_SETUP_SECRETS_CONFIG=$(cat <<'EOF'
     ${builtins.toJSON {
       sources = cfg.sources;
@@ -89,7 +88,7 @@ in
       default = nixos-setup-secrets-wrapper;
     };
   };
-  imports = [ (import ./users.nix moduleArgs) ];
+  imports = [ ./users.nix ];
   config = {
     assertions = lib.flatten (
       map (

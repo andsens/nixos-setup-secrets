@@ -90,12 +90,12 @@ func (config *Config) store(log io.Writer) {
 		for _, srcName := range dest.Requires {
 			src, srcFound := config.Sources[srcName]
 			if !srcFound {
-				fmt.Fprintf(log, "%s: Undefined required secret \"%s\", skipping\n", srcName, dest.LogPrefix)
+				fmt.Fprintf(log, "%s: Undefined required secret \"%s\", skipping\n", dest.LogPrefix, srcName)
 				skip = true
 				continue
 			}
 			if src.Value == nil {
-				fmt.Fprintf(log, "%s: No value for required secret \"%s\", skipping\n", srcName, dest.LogPrefix)
+				fmt.Fprintf(log, "%s: No value for required secret \"%s\", skipping\n", dest.LogPrefix, srcName)
 				skip = true
 				continue
 			}
@@ -107,11 +107,11 @@ func (config *Config) store(log io.Writer) {
 		for _, srcName := range dest.Wants {
 			src, srcFound := config.Sources[srcName]
 			if !srcFound {
-				fmt.Fprintf(log, "%s: Undefined required secret \"%s\", omitting\n", srcName, dest.LogPrefix)
+				fmt.Fprintf(log, "%s: Undefined required secret \"%s\", omitting\n", dest.LogPrefix, srcName)
 				continue
 			}
 			if src.Value == nil {
-				fmt.Fprintf(log, "%s: No value for required secret \"%s\", omitting\n", srcName, dest.LogPrefix)
+				fmt.Fprintf(log, "%s: No value for required secret \"%s\", omitting\n", dest.LogPrefix, srcName)
 				continue
 			}
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", srcName, *src.Value))

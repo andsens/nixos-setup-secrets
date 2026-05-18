@@ -95,7 +95,7 @@ func (config *Config) store(log io.Writer) {
 				skip = true
 				continue
 			}
-			if src.Value == nil {
+			if src.Value == nil || *src.Value == "" {
 				fmt.Fprintf(log, "%s: No value for required secret \"%s\", skipping\n", dest.LogPrefix, srcName)
 				skip = true
 				continue
@@ -111,7 +111,7 @@ func (config *Config) store(log io.Writer) {
 				fmt.Fprintf(log, "%s: Undefined required secret \"%s\", omitting\n", dest.LogPrefix, srcName)
 				continue
 			}
-			if src.Value == nil {
+			if src.Value == nil || *src.Value == "" {
 				fmt.Fprintf(log, "%s: No value for required secret \"%s\", omitting\n", dest.LogPrefix, srcName)
 				continue
 			}

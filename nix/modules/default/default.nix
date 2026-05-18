@@ -16,7 +16,7 @@ let
   };
   nixos-setup-secrets-wrapper = pkgs.writeShellScriptBin "setup-secrets" ''
     PATH=${pkgs.lib.makeBinPath [ pkgs.bash ]}
-    export NIXOS_SETUP_SECRETS_CONFIG=$(cat <<'EOF'
+    export NIXOS_SETUP_SECRETS_CONFIG=$(${lib.getExe' pkgs.coreutils "cat"} <<'EOF'
     ${builtins.toJSON {
       sources = cfg.sources;
       destinations = cfg.destinations;

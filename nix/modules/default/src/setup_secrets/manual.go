@@ -25,7 +25,7 @@ func SetupManual(config *Config) error {
 
 	go func() {
 		config.fetch(logs)
-		logs.Write([]byte("Done."))
+		logs.Write([]byte("Done.\n"))
 
 		var inputFields []*tview.InputField
 		for name, src := range config.Sources {
@@ -53,7 +53,7 @@ func SetupManual(config *Config) error {
 		})
 		form.AddButton("Save", func() {
 			config.store(logs)
-			logs.Write([]byte("Done."))
+			logs.Write([]byte("Done.\n"))
 		})
 		form.SetTitle("Form")
 		root.AddItem(form, 0, 0, 1, 1, 0, 0, false)

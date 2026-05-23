@@ -28,7 +28,7 @@ in
         cmd = lib.getExe (
           pkgs.writeShellScriptBin "set-pwhash.sh" ''
             umask 077
-            printf "%s" "$USER_PW_${user}" | mkpasswd --stdin > "${spec.hashedPasswordFile}"
+            printf "%s" "$USER_PW_${user}" | ${lib.getExe pkgs.mkpasswd} --stdin > "${spec.hashedPasswordFile}"
           ''
         );
       }) (users);

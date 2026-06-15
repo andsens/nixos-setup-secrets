@@ -2,12 +2,14 @@ package setup_secrets
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -60,7 +62,10 @@ func (config *Config) fetch(log io.Writer) {
 			delete(config.Sources, name)
 			continue
 		}
-		cmd := exec.Command("/usr/bin/env", "bash", "-c", src.Cmd)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "/usr/bin/env", "bash", "-c", src.Cmd)
+		cmd.WaitDelay = 1 * time.Second
 		stderr, err := cmd.StderrPipe()
 		if err != nil {
 			log.Write([]byte(fmt.Errorf("%s: IO error occurred: %w\n", name, err).Error()))
@@ -69,6 +74,9 @@ func (config *Config) fetch(log io.Writer) {
 			go func() {
 				for scanner.Scan() {
 					fmt.Fprintf(log, "%s: %s\n", name, scanner.Text())
+				}
+				if err = scanner.Err(); err != nil {
+					fmt.Fprintf(log, "%s: %s\n", name, err)
 				}
 			}()
 		}
@@ -85,7 +93,10 @@ func (config *Config) fetch(log io.Writer) {
 
 func (config *Config) store(log io.Writer) {
 	for _, dest := range config.Destinations {
-		cmd := exec.Command("bash", "-c", dest.Cmd)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "bash", "-c", dest.Cmd)
+		cmd.WaitDelay = 1 * time.Second
 		cmd.Env = os.Environ()
 		skip := false
 		for _, srcName := range dest.Requires {
@@ -126,6 +137,9 @@ func (config *Config) store(log io.Writer) {
 			go func() {
 				for scanner.Scan() {
 					fmt.Fprintf(log, "%s: %s\n", dest.LogPrefix, scanner.Text())
+				}
+				if err = scanner.Err(); err != nil {
+					fmt.Fprintf(log, "%s: %s\n", dest.LogPrefix, err)
 				}
 			}()
 		}

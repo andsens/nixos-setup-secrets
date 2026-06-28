@@ -31,7 +31,7 @@ in
             printf "%s" "$USER_PW_${user}" | ${lib.getExe pkgs.mkpasswd} --stdin > "${spec.hashedPasswordFile}"
           ''
         );
-      }) (users);
+      }) users;
     };
   };
 }

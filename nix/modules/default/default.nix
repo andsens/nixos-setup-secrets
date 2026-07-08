@@ -1,3 +1,4 @@
+{ self, inputs, ... }:
 {
   config,
   pkgs,
@@ -27,6 +28,7 @@ let
   '';
 in
 {
+  key = "${toString __curPos.file}#modules.nixos.setup-secrets";
   options.setup-secrets = {
     enable = lib.mkEnableOption "the cli utility for setting up secrets";
     autoSetup = lib.mkEnableOption "automatic fetching & storing of secrets";
@@ -88,8 +90,8 @@ in
       default = nixos-setup-secrets-wrapper;
     };
   };
-  imports = [ ./users.nix ];
-  config = {
+  imports = [ (inputs.flake-parts.lib.importApply ./users.nix { inherit self inputs; }) ];
+  config = lib.mkIf cfg.enable {
     assertions = lib.flatten (
       map (
         dest:

@@ -13,10 +13,20 @@
       ...
     }@inputs:
     flake-parts.lib.mkFlake { inherit inputs; } (
-      { ... }:
+      {
+        flake-parts-lib,
+        inputs,
+        self,
+        ...
+      }:
+      let
+        inherit (flake-parts-lib) importApply;
+      in
       {
         systems = import systems;
-        flake.nixosModules.default = ./nix/modules/default;
+        flake.nixosModules.default = importApply ./nix/modules/default {
+          inherit self inputs;
+        };
       }
     );
 }

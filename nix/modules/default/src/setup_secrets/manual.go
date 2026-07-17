@@ -1,6 +1,9 @@
 package setup_secrets
 
 import (
+	"maps"
+	"slices"
+
 	"github.com/rivo/tview"
 )
 
@@ -28,7 +31,8 @@ func SetupManual(config *Config) error {
 		logs.Write([]byte("Done.\n"))
 
 		var inputFields []*tview.InputField
-		for name, src := range config.Sources {
+		for _, name := range slices.Sorted(maps.Keys(config.Sources)) {
+			src := config.Sources[name]
 			var val string
 			if src.Value == nil {
 				val = ""

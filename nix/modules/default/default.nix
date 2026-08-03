@@ -20,8 +20,8 @@ let
     umask 077
     export NIXOS_SETUP_SECRETS_CONFIG=$(${lib.getExe' pkgs.coreutils "cat"} <<'EOF'
     ${builtins.toJSON {
-      sources = cfg.sources;
-      destinations = cfg.destinations;
+      sources = lib.filterAttrs (name: { enable, ... }: enable) cfg.sources;
+      destinations = lib.filter ({ enable, ... }: enable) cfg.destinations;
     }}
     EOF
     )
@@ -40,6 +40,11 @@ in
           { name, ... }:
           {
             options = {
+              enable = lib.mkOption {
+                description = "Whether to enable this secret source";
+                type = lib.types.bool;
+                default = true;
+              };
               description = lib.mkOption {
                 description = "The description of the secret as displayed in the form. Defaults to <name>";
                 type = lib.types.str;
@@ -60,7 +65,11 @@ in
       type = lib.types.listOf (
         lib.types.submodule {
           options = {
-            enable = lib.mkEnableOption "this secret destination";
+            enable = lib.mkOption {
+              description = "Whether to enable this secret destination";
+              type = lib.types.bool;
+              default = true;
+            };
             logPrefix = lib.mkOption {
               description = "A short description of the destination.";
               type = lib.types.str;
@@ -117,6 +126,5 @@ in
     system.activationScripts.setup-secrets = lib.mkIf cfg.autoSetup {
       text = "${lib.getExe nixos-setup-secrets-wrapper} --auto";
     };
-
   };
 }

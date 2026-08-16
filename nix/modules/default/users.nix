@@ -17,12 +17,12 @@ in
   };
   config = lib.mkIf (cfg.enable && cfg.users.enable) {
     setup-secrets = {
-      sources = lib.mapAttrs' (
-        user: spec:
-        lib.nameValuePair "USER_PW_${user}" {
+      sources = lib.mapAttrs' (user: spec: {
+        name = "USER_PW_${user}";
+        value = {
           description = "Password for ${user}";
-        }
-      ) users;
+        };
+      }) users;
       destinations = lib.mapAttrsToList (user: spec: {
         logPrefix = "Password for ${user}";
         requires = [ "USER_PW_${user}" ];

@@ -98,6 +98,7 @@ in
       type = lib.types.package;
       readOnly = true;
       default = nixos-setup-secrets-wrapper;
+      defaultText = "";
     };
   };
   imports = [ (inputs.flake-parts.lib.importApply ./users.nix { inherit self inputs; }) ];

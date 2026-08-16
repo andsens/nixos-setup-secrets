@@ -1,4 +1,4 @@
-# nix-setup-secrets
+# nixos-setup-secrets
 
 A NixOS module and CLI for setting up secrets on a machine without ever
 storing them -- encrypted or not -- in the Nix store or your git repo.
@@ -15,14 +15,14 @@ to hand it off to wherever it's actually needed.
 
 ## Setup
 
-Add `nix-setup-secrets` to your `flake.nix` and import the module:
+Add `nixos-setup-secrets` to your `flake.nix` and import the module:
 
 ```nix
 {
   inputs = {
     ...
     setup-secrets = {
-      url = "github:andsens/nix-setup-secrets";
+      url = "github:andsens/nixos-setup-secrets";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     ...

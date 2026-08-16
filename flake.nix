@@ -40,7 +40,7 @@
               inherit pkgs;
               modules = lib.attrValues self.nixosModules;
               repoPath = toString self;
-              repoLinkPrefix = "https://github.com/andsens/nix-setup-secrets/blob/main";
+              repoLinkPrefix = "https://github.com/andsens/nixos-setup-secrets/blob/main";
             };
           in
           {

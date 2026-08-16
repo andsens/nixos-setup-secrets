@@ -26,7 +26,7 @@ true
 ```
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -56,7 +56,7 @@ true
 ```
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -72,7 +72,7 @@ List of commands to run when the form is submitted\.
 list of (submodule)
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -96,7 +96,7 @@ true
 ```
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -112,7 +112,7 @@ Command to create or update the secret
 string
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -136,7 +136,7 @@ string
 ```
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -160,7 +160,7 @@ list of string
 ```
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -184,7 +184,7 @@ list of string
 ```
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -208,7 +208,7 @@ package *(read only)*
 ```
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -224,7 +224,7 @@ Map of secrets\. \<name> becomes the secret name\.
 attribute set of (submodule)
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -248,7 +248,7 @@ true
 ```
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -272,7 +272,7 @@ null
 ```
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -296,7 +296,7 @@ string
 ```
 
 *Declared by:*
- - [nix/modules/default/default\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/default.nix)
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
 
 
 
@@ -328,6 +328,6 @@ true
 ```
 
 *Declared by:*
- - [nix/modules/default/users\.nix](https://github.com/andsens/nix-setup-secrets/blob/main/nix/modules/default/users.nix)
+ - [nix/modules/default/users\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/users.nix)
 
 

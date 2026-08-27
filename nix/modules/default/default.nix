@@ -119,7 +119,7 @@ in
       enable = cfg.autoSetup;
       description = "Automatically fetch & store NixOS secrets";
       wantedBy = [ "default.target" ];
-      unitConfig = {
+      serviceConfig = {
         Type = "oneshot";
         ExecStart = "${lib.getExe cfg.script} --auto";
       };

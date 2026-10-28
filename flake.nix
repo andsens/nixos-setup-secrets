@@ -48,7 +48,10 @@
               inherit pkgs;
               paths."docs/options.md" = options-docs.optionsCommonMark;
             };
-            packages.options-docs = options-docs.optionsCommonMark;
+            packages = {
+              nixos-setup-secrets = pkgs.callPackage ./nix/modules/default/package.nix { };
+              options-docs = options-docs.optionsCommonMark;
+            };
           };
       }
     );

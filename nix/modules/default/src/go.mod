@@ -3,7 +3,7 @@ module github.com/andsens/nixos-setup-secrets
 go 1.25.8
 
 require (
-	github.com/alecthomas/kong v1.15.0
+	github.com/alecthomas/kong v1.16.1
 	github.com/rivo/tview v0.42.0
 )
 

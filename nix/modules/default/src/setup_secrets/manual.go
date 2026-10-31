@@ -21,8 +21,8 @@ func SetupManual(config *Config) error {
 
 	logs := tview.NewTextView()
 	logs.SetChangedFunc(func() {
-		app.Draw()
-		logs.ScrollToEnd()
+		// Runs in its own goroutine, so access to logs has to be queued
+		app.QueueUpdateDraw(func() { logs.ScrollToEnd() })
 	}).SetBorder(true).SetTitle("Log")
 	root.AddItem(logs, 0, 1, 1, 1, 0, 0, false)
 
@@ -62,9 +62,24 @@ func buildForm(app *tview.Application, form *tview.Form, config *Config, logs *t
 		}
 	})
 	form.AddButton("Save", func() {
-		config.store(logs)
-		logs.Write([]byte("Done.\n"))
+		// Keep the event loop free while the destination commands run,
+		// the disabled form prevents a second save and edits to the values
+		setFormDisabled(form, true)
+		go func() {
+			config.store(logs)
+			logs.Write([]byte("Done.\n"))
+			app.QueueUpdateDraw(func() { setFormDisabled(form, false) })
+		}()
 	})
 	form.SetTitle("Form")
 	app.SetFocus(form)
+}
+
+func setFormDisabled(form *tview.Form, disabled bool) {
+	for i := range form.GetFormItemCount() {
+		form.GetFormItem(i).SetDisabled(disabled)
+	}
+	for i := range form.GetButtonCount() {
+		form.GetButton(i).SetDisabled(disabled)
+	}
 }

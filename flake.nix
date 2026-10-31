@@ -44,13 +44,13 @@
             };
           in
           {
-            apps.update-docs.program = inputs.docs.lib.docs.updateRepo {
+            apps.update-docs.program = inputs.docs.lib.utils.updateRepo {
               inherit pkgs;
-              paths."docs/options.md" = options-docs.optionsCommonMark;
+              paths."docs/options.md" = options-docs;
             };
             packages = {
               nixos-setup-secrets = pkgs.callPackage ./nix/modules/default/package.nix { };
-              options-docs = options-docs.optionsCommonMark;
+              options-docs = options-docs;
             };
           };
       }

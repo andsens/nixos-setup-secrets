@@ -2,7 +2,7 @@
 
 
 
-Whether to enable the cli utility for setting up secrets\.
+Whether to enable the module: its assertions, and with ` autoSetup ` its service and activation script\. It doesn’t install the CLI, which is ` setup-secrets.script `\.
 
 
 

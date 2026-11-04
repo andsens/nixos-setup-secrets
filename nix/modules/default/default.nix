@@ -24,7 +24,7 @@ in
 {
   key = "${toString __curPos.file}#modules.nixos.setup-secrets";
   options.setup-secrets = {
-    enable = lib.mkEnableOption "the cli utility for setting up secrets";
+    enable = lib.mkEnableOption "the module: its assertions, and with `autoSetup` its service and activation script. It doesn't install the CLI, which is `setup-secrets.script`";
     autoSetup = lib.mkEnableOption "automatic fetching & storing of secrets";
     sources = lib.mkOption {
       description = "Map of secrets. <name> becomes the secret name.";

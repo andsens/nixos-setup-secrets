@@ -5,5 +5,5 @@ buildGo126Module {
   meta.mainProgram = "nixos-setup-secrets";
   src = ./src;
   proxyVendor = true;
-  vendorHash = "sha256-5QrZ2zInsQs5mFL7QVV57PtaEutc+Ut5eIG6CmGkDgU=";
+  vendorHash = "sha256-aSArZqy0Sgav/mdCAPs+8fb5XRGsPFG/2ciwJUPYetw=";
 }

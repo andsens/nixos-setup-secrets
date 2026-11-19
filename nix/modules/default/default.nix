@@ -102,7 +102,7 @@ in
         map (src: {
           assertion = builtins.elem src (builtins.attrNames cfg.sources);
           message = ''
-            setup-secrets.destinations with logEntry \"${dest.logEntry}\" requires a secret source that is not defined: ${src}
+            setup-secrets.destinations with logPrefix "${dest.logPrefix}" requires a secret source that is not defined: ${src}
             A secret source need not have a command set, but it must be defined.
           '';
         }) dest.requires

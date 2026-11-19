@@ -9,7 +9,7 @@ updates:
   schedule:
     interval: weekly
 - package-ecosystem: gomod
-  directory: /nix/modules/default/src
+  directory: /
   schedule:
     interval: weekly
   groups:

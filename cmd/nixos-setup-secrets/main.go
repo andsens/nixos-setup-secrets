@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/alecthomas/kong"
-	setupSecrets "github.com/andsens/nixos-setup-secrets/setup_secrets"
+	"github.com/andsens/nixos-setup-secrets/internal/setupsecrets"
 )
 
 type Params struct {
@@ -21,15 +21,15 @@ func main() {
 	if params.Verbose {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
-	config, err := setupSecrets.GetConfig()
+	config, err := setupsecrets.GetConfig()
 	if err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 	if params.Auto {
-		err = setupSecrets.SetupAuto(config)
+		err = setupsecrets.SetupAuto(config)
 	} else {
-		err = setupSecrets.SetupManual(config)
+		err = setupsecrets.SetupManual(config)
 	}
 	if err != nil {
 		slog.Error(err.Error())

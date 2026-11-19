@@ -1,4 +1,4 @@
-package setup_secrets
+package setupsecrets
 
 import (
 	"bufio"

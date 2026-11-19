@@ -213,7 +213,11 @@ in
                       "sysinit.target"
                       "sysinit-reactivation.target"
                     ];
-                    after = [ "local-fs.target" ];
+                    # After the TPM, without pulling it in (systemd.special): commands may use systemd-creds with TPM2
+                    after = [
+                      "local-fs.target"
+                      "tpm2.target"
+                    ];
                     before = [
                       "sysinit.target"
                       "sysinit-reactivation.target"

@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,6 +31,8 @@ type Source struct {
 	StoredIn string `json:"storedIn"`
 	Attempts
 	Value *string
+	// Whether the last run of Cmd failed, as opposed to succeeding without printing a value
+	failed bool
 }
 
 type Destination struct {
@@ -137,15 +140,27 @@ func (config *Config) fetch(log io.Writer) (failed []string) {
 
 // fetch runs the command of the source and keeps what it prints as the value
 func (src *Source) fetch(log io.Writer, name string) error {
+	value, err := src.fetchValue(log, name)
+	src.failed = err != nil
+	if err == nil {
+		src.Value = &value
+	}
+	return err
+}
+
+// fetchValue runs the command of the source and returns what it prints, leaving the source as it is
+func (src *Source) fetchValue(log io.Writer, name string) (string, error) {
 	fmt.Fprintf(log, "%s: Fetching\n", name)
 	val, err := run(log, name, src.Cmd, nil, src.Attempts)
 	if err != nil {
 		fmt.Fprintf(log, "%s: Fetching secret failed: %s\n", name, err)
-		return err
+		return "", err
 	}
 	value := strings.TrimSpace(string(val))
-	src.Value = &value
-	return nil
+	if value == "" {
+		fmt.Fprintf(log, "%s: No value yet\n", name)
+	}
+	return value, nil
 }
 
 // Needs says whether the destination requires or wants the secret
@@ -184,12 +199,88 @@ func (config *Config) storeOne(log io.Writer, dest *Destination) storeResult {
 		}
 		return storeWaiting
 	}
+	return runDestination(log, dest, env)
+}
+
+// runDestination runs the command of the destination with the variables destinationEnv returned
+func runDestination(log io.Writer, dest *Destination, env []string) storeResult {
 	fmt.Fprintf(log, "%s: Storing\n", dest.LogPrefix)
 	if _, err := run(log, dest.LogPrefix, dest.Cmd, env, dest.Attempts); err != nil {
 		fmt.Fprintf(log, "%s: Storing secret failed: %s\n", dest.LogPrefix, err)
 		return storeFailed
 	}
 	return storeDone
+}
+
+// fetchAndStore fetches the sources a few at a time and runs each destination as soon as every secret it requires
+// or wants is fetched, so a source that waits for a workload doesn't hold up the destinations that workload waits for.
+// It returns the sources that failed, and the destinations that failed or were skipped for a secret whose command
+// failed
+func (config *Config) fetchAndStore(log io.Writer, workers int) (failedSources, failedDests []string) {
+	needed := map[string]bool{}
+	for _, dest := range config.Destinations {
+		for _, name := range append(slices.Clone(dest.Requires), dest.Wants...) {
+			needed[name] = true
+		}
+	}
+	pending := map[string]bool{}
+	for _, name := range slices.Sorted(maps.Keys(config.Sources)) {
+		switch {
+		case !needed[name]:
+			fmt.Fprintf(log, "%s: Not required or needed by any destination, omitting\n", name)
+			delete(config.Sources, name)
+		case config.Sources[name].Cmd == "":
+			fmt.Fprintf(log, "%s: Has no fetch command, skipping\n", name)
+		default:
+			pending[name] = true
+		}
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, workers)
+	started := make([]bool, len(config.Destinations))
+	// startReady starts the destinations whose secrets are all fetched; mu is held
+	startReady := func() {
+		for i, dest := range config.Destinations {
+			if started[i] || slices.ContainsFunc(append(slices.Clone(dest.Requires), dest.Wants...), func(name string) bool { return pending[name] }) {
+				continue
+			}
+			started[i] = true
+			wg.Go(func() {
+				slots <- struct{}{}
+				result := config.storeOne(log, dest)
+				<-slots
+				if result == storeFailed || result == storeSkippedFault {
+					mu.Lock()
+					failedDests = append(failedDests, dest.LogPrefix)
+					mu.Unlock()
+				}
+			})
+		}
+	}
+	mu.Lock()
+	startReady()
+	for _, name := range slices.Sorted(maps.Keys(pending)) {
+		src := config.Sources[name]
+		wg.Go(func() {
+			slots <- struct{}{}
+			err := src.fetch(log, name)
+			<-slots
+			mu.Lock()
+			defer mu.Unlock()
+			delete(pending, name)
+			if err != nil {
+				failedSources = append(failedSources, name)
+			}
+			startReady()
+		})
+	}
+	mu.Unlock()
+	wg.Wait()
+	slices.Sort(failedSources)
+	slices.Sort(failedDests)
+	return failedSources, failedDests
 }
 
 // destinationEnv returns the variables of the secrets a destination requires and wants, or false when a required
@@ -206,7 +297,8 @@ func (config *Config) destinationEnv(log io.Writer, dest *Destination) (env []st
 		if src.Value == nil || *src.Value == "" {
 			fmt.Fprintf(log, "%s: No value for required secret \"%s\", skipping\n", dest.LogPrefix, srcName)
 			ok = false
-			fault = fault || src.Cmd != ""
+			// A command that succeeded without a value has nothing yet, like a secret without a command
+			fault = fault || src.failed
 			continue
 		}
 		env = append(env, fmt.Sprintf("%s=%s", srcName, *src.Value))

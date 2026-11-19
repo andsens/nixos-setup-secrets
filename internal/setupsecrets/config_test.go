@@ -3,7 +3,9 @@ package setupsecrets
 import (
 	"bytes"
 	"errors"
+	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -150,4 +152,48 @@ func TestFailures(t *testing.T) {
 	if strings.Join(got, ",") != "needs bad,breaks" {
 		t.Errorf("store failures %v\n%s", got, log.String())
 	}
+}
+
+func TestFetchAndStoreOrder(t *testing.T) {
+	noSleep(t)
+	dir := t.TempDir()
+	// A_WAITS sorts first and waits for a file the destination of QUICK makes, as an exec source waits for a workload
+	// that waits for a Secret of the same run
+	config := testConfig(t, `{
+		"sources": {
+			"A_WAITS": {"cmd": "for i in $(seq 100); do [[ -e `+dir+`/made ]] && echo ok && exit 0; sleep 0.05; done; exit 1"},
+			"QUICK": {"cmd": "echo quick"},
+			"EMPTY": {"cmd": "true"},
+			"BROKEN": {"cmd": "exit 3"}
+		},
+		"destinations": [
+			{"logPrefix": "uses the waiting one", "requires": ["A_WAITS"], "cmd": "true"},
+			{"logPrefix": "makes the file", "requires": ["QUICK"], "cmd": "touch `+dir+`/made"},
+			{"logPrefix": "nothing yet", "requires": ["EMPTY"], "cmd": "true"},
+			{"logPrefix": "after a failure", "requires": ["BROKEN"], "cmd": "true"}
+		]}`)
+	var log bytes.Buffer
+	fetchFailed, storeFailed := config.fetchAndStore(&syncWriter{w: &log}, 2)
+	if strings.Join(fetchFailed, ",") != "BROKEN" {
+		t.Errorf("fetch failures %v\n%s", fetchFailed, log.String())
+	}
+	// An empty value is "nothing yet", as for a secret without a command; a failed command is a failure
+	if strings.Join(storeFailed, ",") != "after a failure" {
+		t.Errorf("store failures %v\n%s", storeFailed, log.String())
+	}
+	if !strings.Contains(log.String(), "uses the waiting one: Storing") {
+		t.Errorf("the waiting source held up the destination it waits for:\n%s", log.String())
+	}
+}
+
+// syncWriter makes a buffer safe for the concurrent fetches
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(b []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(b)
 }

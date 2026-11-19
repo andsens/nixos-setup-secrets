@@ -95,6 +95,17 @@ in
                 description = "Command to retrieve the secret";
                 default = null;
               };
+              storedIn = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                description = ''
+                  Where a destination of this secret stores the value that `cmd` reads back, as shown in the form
+                  (`kube cert-manager/inwx-credentials`, `/etc/secrets.d/restic.key`). Set, the value can be edited in
+                  the form and the edit sticks. Without it, a source with `cmd` reads its value from somewhere
+                  setup-secrets never writes, so the form shows it read-only. A source without `cmd` is always
+                  editable.
+                '';
+                default = null;
+              };
             }
             // attemptsOptions "retrieve the secret";
           }

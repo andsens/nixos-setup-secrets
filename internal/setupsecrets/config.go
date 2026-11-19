@@ -26,6 +26,8 @@ type Attempts struct {
 type Source struct {
 	Description string `json:"description"`
 	Cmd         string `json:"cmd"`
+	// Where a destination stores the value that Cmd reads back, which makes an edited value stick
+	StoredIn string `json:"storedIn"`
 	Attempts
 	Value *string
 }
@@ -126,17 +128,29 @@ func (config *Config) fetch(log io.Writer) (failed []string) {
 			fmt.Fprintf(log, "%s: Has no fetch command, skipping\n", name)
 			continue
 		}
-		fmt.Fprintf(log, "%s: Fetching\n", name)
-		val, err := run(log, name, src.Cmd, nil, src.Attempts)
-		if err != nil {
-			fmt.Fprintf(log, "%s: Fetching secret failed: %s\n", name, err)
+		if err := src.fetch(log, name); err != nil {
 			failed = append(failed, name)
-			continue
 		}
-		value := strings.TrimSpace(string(val))
-		src.Value = &value
 	}
 	return failed
+}
+
+// fetch runs the command of the source and keeps what it prints as the value
+func (src *Source) fetch(log io.Writer, name string) error {
+	fmt.Fprintf(log, "%s: Fetching\n", name)
+	val, err := run(log, name, src.Cmd, nil, src.Attempts)
+	if err != nil {
+		fmt.Fprintf(log, "%s: Fetching secret failed: %s\n", name, err)
+		return err
+	}
+	value := strings.TrimSpace(string(val))
+	src.Value = &value
+	return nil
+}
+
+// Needs says whether the destination requires or wants the secret
+func (dest *Destination) Needs(name string) bool {
+	return slices.Contains(dest.Requires, name) || slices.Contains(dest.Wants, name)
 }
 
 // store runs the destinations and returns those that failed, or were skipped for a required secret that has a
@@ -144,20 +158,38 @@ func (config *Config) fetch(log io.Writer) (failed []string) {
 // that value can only come from someone typing it in
 func (config *Config) store(log io.Writer) (failed []string) {
 	for _, dest := range config.Destinations {
-		env, ok, fault := config.destinationEnv(log, dest)
-		if !ok {
-			if fault {
-				failed = append(failed, dest.LogPrefix)
-			}
-			continue
-		}
-		fmt.Fprintf(log, "%s: Storing\n", dest.LogPrefix)
-		if _, err := run(log, dest.LogPrefix, dest.Cmd, env, dest.Attempts); err != nil {
-			fmt.Fprintf(log, "%s: Storing secret failed: %s\n", dest.LogPrefix, err)
+		if result := config.storeOne(log, dest); result == storeFailed || result == storeSkippedFault {
 			failed = append(failed, dest.LogPrefix)
 		}
 	}
 	return failed
+}
+
+type storeResult int
+
+const (
+	storeDone storeResult = iota
+	storeFailed
+	// Skipped for a required secret without a value that only someone typing it in can supply
+	storeWaiting
+	// Skipped for a required secret that is undefined or whose command didn't deliver
+	storeSkippedFault
+)
+
+func (config *Config) storeOne(log io.Writer, dest *Destination) storeResult {
+	env, ok, fault := config.destinationEnv(log, dest)
+	if !ok {
+		if fault {
+			return storeSkippedFault
+		}
+		return storeWaiting
+	}
+	fmt.Fprintf(log, "%s: Storing\n", dest.LogPrefix)
+	if _, err := run(log, dest.LogPrefix, dest.Cmd, env, dest.Attempts); err != nil {
+		fmt.Fprintf(log, "%s: Storing secret failed: %s\n", dest.LogPrefix, err)
+		return storeFailed
+	}
+	return storeDone
 }
 
 // destinationEnv returns the variables of the secrets a destination requires and wants, or false when a required

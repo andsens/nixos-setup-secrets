@@ -451,6 +451,34 @@ unsigned integer, meaning >=0
 
 
 
+## setup-secrets\.sources\.\<name>\.storedIn
+
+
+
+Where a destination of this secret stores the value that ` cmd ` reads back, as shown in the form
+(` kube cert-manager/inwx-credentials `, ` /etc/secrets.d/restic.key `)\. Set, the value can be edited in
+the form and the edit sticks\. Without it, a source with ` cmd ` reads its value from somewhere
+setup-secrets never writes, so the form shows it read-only\. A source without ` cmd ` is always
+editable\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
 ## setup-secrets\.sources\.\<name>\.timeout
 
 

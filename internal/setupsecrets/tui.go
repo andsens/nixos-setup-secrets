@@ -1,0 +1,719 @@
+package setupsecrets
+
+import (
+	"fmt"
+	"maps"
+	"os"
+	"slices"
+	"strings"
+
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
+)
+
+var (
+	colorBg     = tcell.NewHexColor(0x0f1419)
+	colorFg     = tcell.NewHexColor(0xc5cdd9)
+	colorDim    = tcell.NewHexColor(0x8a96a3)
+	colorMuted  = tcell.NewHexColor(0x3e4752)
+	colorAccent = tcell.NewHexColor(0x59c2ff)
+	colorKey    = tcell.NewHexColor(0xffb454)
+	colorGreen  = tcell.NewHexColor(0x91d076)
+	colorYellow = tcell.NewHexColor(0xe6c446)
+	colorRed    = tcell.NewHexColor(0xf07178)
+	colorCyan   = tcell.NewHexColor(0x95e6cb)
+	colorSelBg  = tcell.NewHexColor(0x1f3a52)
+	colorLinkBg = tcell.NewHexColor(0x172634)
+	colorBorder = tcell.NewHexColor(0x2d3640)
+)
+
+// What a secret or destination shows in its STATE column
+const (
+	stateFetching = "fetching"
+	stateFetched  = "fetched"
+	stateFailed   = "failed"
+	stateMissing  = "missing"
+	stateSet      = "set"
+	stateEdited   = "edited"
+	stateNotRun   = "not run"
+	stateStoring  = "storing"
+	stateStored   = "stored"
+	stateWaiting  = "waiting"
+)
+
+func stateColor(state string) tcell.Color {
+	switch state {
+	case stateFetched, stateStored, stateEdited:
+		return colorGreen
+	case stateFailed:
+		return colorRed
+	case stateMissing, stateWaiting:
+		return colorYellow
+	case stateSet:
+		return colorCyan
+	}
+	return colorDim
+}
+
+// kind tells where the value of a source lives, which decides whether it can be edited
+func (src *Source) kind() string {
+	switch {
+	case src.Cmd == "":
+		return "manual"
+	case src.StoredIn != "":
+		return "stored"
+	}
+	return "upstream"
+}
+
+func (src *Source) editable() bool { return src.kind() != "upstream" }
+
+type tui struct {
+	host   string
+	app    *tview.Application
+	config *Config
+	names  []string
+	// What the STATE columns show, by secret name and by destination index
+	srcState  map[string]string
+	destState []string
+
+	pages          *tview.Pages
+	header         *tview.TextView
+	secrets, dests *tview.Table
+	status, crumbs *tview.TextView
+	logs           *tview.TextView
+	focusDests     bool
+
+	// queue runs a change of the widgets on the event loop, do runs a job off it, one at a time
+	queue func(func())
+	do    func(func())
+}
+
+func newTUI(app *tview.Application, config *Config) *tui {
+	tview.Styles.PrimitiveBackgroundColor = colorBg
+	tview.Styles.ContrastBackgroundColor = colorSelBg
+	tview.Styles.MoreContrastBackgroundColor = colorBorder
+	tview.Styles.BorderColor = colorBorder
+	tview.Styles.TitleColor = colorAccent
+	tview.Styles.PrimaryTextColor = colorFg
+	tview.Styles.SecondaryTextColor = colorKey
+	tview.Borders.HorizontalFocus = tview.Borders.Horizontal
+	tview.Borders.VerticalFocus = tview.Borders.Vertical
+	tview.Borders.TopLeftFocus = tview.Borders.TopLeft
+	tview.Borders.TopRightFocus = tview.Borders.TopRight
+	tview.Borders.BottomLeftFocus = tview.Borders.BottomLeft
+	tview.Borders.BottomRightFocus = tview.Borders.BottomRight
+
+	host, _ := os.Hostname()
+	t := &tui{
+		host:      host,
+		app:       app,
+		config:    config,
+		names:     slices.Sorted(maps.Keys(config.Sources)),
+		srcState:  map[string]string{},
+		destState: make([]string, len(config.Destinations)),
+		header:    tview.NewTextView().SetDynamicColors(true),
+		secrets:   tview.NewTable(),
+		dests:     tview.NewTable(),
+		status:    tview.NewTextView().SetDynamicColors(true),
+		crumbs:    tview.NewTextView().SetDynamicColors(true),
+		logs:      tview.NewTextView().SetDynamicColors(false),
+	}
+	t.queue = func(f func()) { app.QueueUpdateDraw(f) }
+	jobs := make(chan func(), 16)
+	go func() {
+		for job := range jobs {
+			job()
+		}
+	}()
+	t.do = func(job func()) { jobs <- job }
+
+	for _, name := range t.names {
+		t.srcState[name] = stateMissing
+		if config.Sources[name].Cmd != "" {
+			t.srcState[name] = stateFetching
+		}
+	}
+	for i := range t.destState {
+		t.destState[i] = stateNotRun
+	}
+
+	for _, table := range []*tview.Table{t.secrets, t.dests} {
+		table.SetSelectable(true, false).SetFixed(1, 0)
+		table.SetSelectedStyle(tcell.StyleDefault.Background(colorSelBg).Foreground(tcell.ColorWhite))
+		table.SetBorder(true).SetBorderPadding(0, 0, 1, 1)
+		table.SetSelectionChangedFunc(func(int, int) { t.render() })
+	}
+	t.logs.SetBorder(true).SetTitle(" [::b]log[::-] ").SetBorderPadding(0, 0, 1, 1)
+	t.logs.SetChangedFunc(func() { t.queue(func() { t.logs.ScrollToEnd() }) })
+
+	body := tview.NewFlex().AddItem(t.secrets, 68, 0, true).AddItem(t.dests, 0, 1, false)
+	main := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(t.header, 4, 0, false).
+		AddItem(body, 0, 1, true).
+		AddItem(t.status, 1, 0, false).
+		AddItem(t.crumbs, 1, 0, false)
+	t.pages = tview.NewPages().AddPage("main", main, true, true)
+	main.SetInputCapture(t.mainKeys)
+	t.secrets.Select(1, 0)
+	t.dests.Select(1, 0)
+	t.render()
+	return t
+}
+
+// SetupManual opens the TUI: every secret beside every destination, edits stored as they are saved
+func SetupManual(config *Config) error {
+	app := tview.NewApplication().EnableMouse(true)
+	t := newTUI(app, config)
+	app.SetRoot(t.pages, true).SetFocus(t.secrets)
+	t.do(t.fetchAll)
+	return app.Run()
+}
+
+func (t *tui) selectedSecret() string {
+	row, _ := t.secrets.GetSelection()
+	if row < 1 || row > len(t.names) {
+		return ""
+	}
+	return t.names[row-1]
+}
+
+func (t *tui) selectedDest() int {
+	row, _ := t.dests.GetSelection()
+	if row < 1 || row > len(t.config.Destinations) {
+		return -1
+	}
+	return row - 1
+}
+
+// destsOf returns the indices of the destinations that need the secret
+func (t *tui) destsOf(name string) []int {
+	var out []int
+	for i, dest := range t.config.Destinations {
+		if dest.Needs(name) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func (t *tui) hasValue(name string) bool {
+	src, ok := t.config.Sources[name]
+	return ok && src.Value != nil && *src.Value != ""
+}
+
+func (t *tui) groupsOf(name string) string {
+	var groups []string
+	for _, i := range t.destsOf(name) {
+		if g := t.config.Destinations[i].Group; !slices.Contains(groups, g) {
+			groups = append(groups, g)
+		}
+	}
+	slices.Sort(groups)
+	return strings.Join(groups, ",")
+}
+
+func (t *tui) ready(dest *Destination) (have, need int) {
+	for _, name := range dest.Requires {
+		if t.hasValue(name) {
+			have++
+		}
+	}
+	return have, len(dest.Requires)
+}
+
+func cell(text string, color tcell.Color, linked, dimmed bool) *tview.TableCell {
+	c := tview.NewTableCell(text + "  ").SetTextColor(color)
+	if dimmed {
+		c.SetTextColor(colorMuted)
+	}
+	if linked {
+		c.SetBackgroundColor(colorLinkBg)
+	}
+	return c
+}
+
+func header(table *tview.Table, cols ...string) {
+	for i, col := range cols {
+		table.SetCell(0, i, tview.NewTableCell(col).SetAttributes(tcell.AttrBold).SetSelectable(false).
+			SetExpansion(map[bool]int{true: 1}[i == len(cols)-1]))
+	}
+}
+
+// render redraws everything from the state: the tables with the rows linked to the selection highlighted, the
+// header, the status line and the crumbs
+func (t *tui) render() {
+	linkedSecrets, linkedDests := map[string]bool{}, map[int]bool{}
+	if t.focusDests {
+		if i := t.selectedDest(); i >= 0 {
+			for _, name := range append(slices.Clone(t.config.Destinations[i].Requires), t.config.Destinations[i].Wants...) {
+				linkedSecrets[name] = true
+			}
+		}
+	} else if name := t.selectedSecret(); name != "" {
+		for _, i := range t.destsOf(name) {
+			linkedDests[i] = true
+		}
+	}
+
+	header(t.secrets, "", "NAME", "KIND", "STATE", "GROUPS")
+	for r, name := range t.names {
+		src, linked := t.config.Sources[name], linkedSecrets[name]
+		dimmed := t.focusDests && !linked
+		mark, nameColor := " ", colorFg
+		if linked {
+			mark = "●"
+		}
+		if !src.editable() {
+			nameColor = colorDim
+		}
+		state := t.srcState[name]
+		t.secrets.SetCell(r+1, 0, cell(mark, colorAccent, linked, dimmed))
+		t.secrets.SetCell(r+1, 1, cell(name, nameColor, linked, dimmed))
+		t.secrets.SetCell(r+1, 2, cell(src.kind(), colorDim, linked, dimmed))
+		t.secrets.SetCell(r+1, 3, cell(state, stateColor(state), linked, dimmed))
+		t.secrets.SetCell(r+1, 4, cell(t.groupsOf(name), colorDim, linked, dimmed))
+	}
+	header(t.dests, "", "DESTINATION", "GROUP", "STATE", "READY")
+	for r, dest := range t.config.Destinations {
+		linked := linkedDests[r]
+		dimmed := !t.focusDests && !linked
+		mark := " "
+		if linked {
+			mark = "●"
+		}
+		have, need := t.ready(dest)
+		readyColor := colorDim
+		if have < need {
+			readyColor = colorYellow
+		}
+		state := t.destState[r]
+		t.dests.SetCell(r+1, 0, cell(mark, colorAccent, linked, dimmed))
+		t.dests.SetCell(r+1, 1, cell(dest.LogPrefix, colorFg, linked, dimmed))
+		t.dests.SetCell(r+1, 2, cell(dest.Group, colorDim, linked, dimmed))
+		t.dests.SetCell(r+1, 3, cell(state, stateColor(state), linked, dimmed))
+		t.dests.SetCell(r+1, 4, cell(fmt.Sprintf("%d of %d", have, need), readyColor, linked, dimmed))
+	}
+
+	focusTitle := func(title string, focused bool, count int) string {
+		if focused {
+			return fmt.Sprintf(" [::b]%s[::-][#ffb454][%d][-] ", title, count)
+		}
+		return fmt.Sprintf(" %s[#ffb454][%d][-] ", title, count)
+	}
+	t.secrets.SetTitle(focusTitle("secrets", !t.focusDests, len(t.names)))
+	t.dests.SetTitle(focusTitle("destinations", t.focusDests, len(t.config.Destinations)))
+	t.secrets.SetBorderColor(map[bool]tcell.Color{true: colorAccent, false: colorBorder}[!t.focusDests])
+	t.dests.SetBorderColor(map[bool]tcell.Color{true: colorAccent, false: colorBorder}[t.focusDests])
+	t.secrets.SetSelectable(!t.focusDests, false)
+	t.dests.SetSelectable(t.focusDests, false)
+
+	t.renderHeader()
+	t.renderStatus(linkedDests)
+}
+
+func count(states []string, state string) int {
+	n := 0
+	for _, s := range states {
+		if s == state {
+			n++
+		}
+	}
+	return n
+}
+
+func (t *tui) renderHeader() {
+	srcStates := slices.Collect(maps.Values(t.srcState))
+	part := func(n int, color, label string) string {
+		if n == 0 {
+			return ""
+		}
+		return fmt.Sprintf("[%s]%d %s[-]  ", color, n, label)
+	}
+	hints := [][2]string{{"tab", "Other pane"}, {"e", "Edit value"}, {"r", "Retry"}, {"enter", "Describe"}, {"l", "Log"}, {"q", "Quit"}}
+	var cols [2]strings.Builder
+	for i, hint := range hints {
+		fmt.Fprintf(&cols[i/3], "[#59c2ff::b]<%s>[-::-] [#8a96a3]%s[-]\n", hint[0], hint[1])
+	}
+	lines := []string{
+		fmt.Sprintf("[#ffb454]Host:[-]          %s", t.host),
+		"[#ffb454]Secrets:[-]       " + part(count(srcStates, stateFetched)+count(srcStates, stateSet)+count(srcStates, stateEdited), "#91d076", "with value") +
+			part(count(srcStates, stateFailed), "#f07178", "failed") + part(count(srcStates, stateMissing), "#e6c446", "missing") +
+			part(count(srcStates, stateFetching), "#8a96a3", "fetching"),
+		"[#ffb454]Destinations:[-]  " + part(count(t.destState, stateStored), "#91d076", "stored") +
+			part(count(t.destState, stateFailed), "#f07178", "failed") + part(count(t.destState, stateWaiting), "#e6c446", "waiting") +
+			part(count(t.destState, stateNotRun), "#8a96a3", "not run"),
+	}
+	hintLines := [2][]string{strings.Split(strings.TrimSpace(cols[0].String()), "\n"), strings.Split(strings.TrimSpace(cols[1].String()), "\n")}
+	var sb strings.Builder
+	for i := range 3 {
+		left := ""
+		if i < len(lines) {
+			left = lines[i]
+		}
+		fmt.Fprintf(&sb, "%s", padTagged(left, 52))
+		for c := range 2 {
+			if i < len(hintLines[c]) {
+				fmt.Fprintf(&sb, "%s", padTagged(hintLines[c][i], 24))
+			}
+		}
+		if i == 0 {
+			sb.WriteString("[#59c2ff::b]setup-secrets[-::-]")
+		}
+		sb.WriteString("\n")
+	}
+	t.header.SetText(sb.String())
+}
+
+// padTagged pads text with style tags to width visible characters
+func padTagged(text string, width int) string {
+	if n := tview.TaggedStringWidth(text); n < width {
+		return text + strings.Repeat(" ", width-n)
+	}
+	return text
+}
+
+func (t *tui) renderStatus(linkedDests map[int]bool) {
+	var status, crumb string
+	if t.focusDests {
+		if i := t.selectedDest(); i >= 0 {
+			dest := t.config.Destinations[i]
+			crumb = dest.LogPrefix
+			var missing []string
+			for _, name := range dest.Requires {
+				if !t.hasValue(name) {
+					missing = append(missing, fmt.Sprintf("[%s]%s[#8a96a3] (%s)", colorName(stateColor(t.srcState[name])), name, t.srcState[name]))
+				}
+			}
+			if len(missing) > 0 {
+				status = dest.LogPrefix + " waits for " + strings.Join(missing, ", ")
+			} else {
+				status = dest.LogPrefix + " has all it requires; r runs it"
+			}
+		}
+	} else if name := t.selectedSecret(); name != "" {
+		crumb = name
+		src := t.config.Sources[name]
+		dests := fmt.Sprintf("its %d destinations", len(linkedDests))
+		if len(linkedDests) == 1 {
+			dests = "its destination"
+		}
+		switch src.kind() {
+		case "upstream":
+			status = fmt.Sprintf("%s comes from a command setup-secrets doesn't write to, so it's read-only; r fetches it again and runs %s", name, dests)
+		case "stored":
+			status = fmt.Sprintf("Saving %s runs %s; the value is read back from %s", name, dests, tview.Escape(src.StoredIn))
+		default:
+			status = fmt.Sprintf("Saving %s runs %s", name, dests)
+		}
+	}
+	t.status.SetText(" [#8a96a3]" + status + "[-]")
+	pane := "secrets"
+	if t.focusDests {
+		pane = "destinations"
+	}
+	t.crumbs.SetText(fmt.Sprintf("[#0f1419:#8a96a3:b] <%s> [-:-:-] [#0f1419:#ffb454:b] <%s> [-:-:-]", pane, tview.Escape(crumb)))
+}
+
+func colorName(c tcell.Color) string {
+	r, g, b := c.RGB()
+	return fmt.Sprintf("#%02x%02x%02x", r, g, b)
+}
+
+func (t *tui) mainKeys(event *tcell.EventKey) *tcell.EventKey {
+	switch {
+	case event.Key() == tcell.KeyTab || event.Key() == tcell.KeyBacktab:
+		t.focusDests = !t.focusDests
+		if t.focusDests {
+			t.app.SetFocus(t.dests)
+		} else {
+			t.app.SetFocus(t.secrets)
+		}
+		t.render()
+		return nil
+	case event.Key() == tcell.KeyEnter:
+		t.describe()
+		return nil
+	case event.Rune() == 'e':
+		t.edit()
+		return nil
+	case event.Rune() == 'r':
+		t.retry()
+		return nil
+	case event.Rune() == 'l':
+		t.showLog()
+		return nil
+	case event.Rune() == 'q':
+		t.app.Stop()
+		return nil
+	}
+	return event
+}
+
+// page shows p over the main view; esc closes it
+func (t *tui) page(name string, p tview.Primitive, overlay bool) {
+	t.pages.AddPage(name, p, true, true)
+	if !overlay {
+		t.pages.SendToFront(name)
+	}
+}
+
+func (t *tui) closePage(name string) {
+	t.pages.RemovePage(name)
+	if t.focusDests {
+		t.app.SetFocus(t.dests)
+	} else {
+		t.app.SetFocus(t.secrets)
+	}
+}
+
+func escCloses(t *tui, name string) func(*tcell.EventKey) *tcell.EventKey {
+	return func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEscape || event.Rune() == 'q' {
+			t.closePage(name)
+			return nil
+		}
+		return event
+	}
+}
+
+func (t *tui) showLog() {
+	t.logs.SetInputCapture(escCloses(t, "log"))
+	t.page("log", t.logs, false)
+	t.app.SetFocus(t.logs)
+}
+
+func (t *tui) describe() {
+	view := tview.NewTextView().SetDynamicColors(true)
+	view.SetBorder(true).SetBorderPadding(0, 0, 1, 1)
+	k := func(s string) string { return "[#59c2ff]" + s + "[-]" }
+	var sb strings.Builder
+	if t.focusDests {
+		i := t.selectedDest()
+		if i < 0 {
+			return
+		}
+		dest := t.config.Destinations[i]
+		view.SetTitle(" [::b]describe[::-][#8a96a3](" + tview.Escape(dest.LogPrefix) + ")[-] ")
+		fmt.Fprintf(&sb, "%s  %s\n%s  %s\n%s  %s\n%s  %s\n\n%s\n", k("destination:"), tview.Escape(dest.LogPrefix), k("group:      "), dest.Group,
+			k("state:      "), t.destState[i], k("cmd:        "), tview.Escape(dest.Cmd), k("needs:"))
+		for _, list := range []struct {
+			label string
+			names []string
+		}{{"requires", dest.Requires}, {"wants", dest.Wants}} {
+			for _, name := range list.names {
+				fmt.Fprintf(&sb, "  [%s]●[-] %-32s %-9s [%s]%s[-]\n", colorName(stateColor(t.srcState[name])), name, list.label,
+					colorName(stateColor(t.srcState[name])), t.srcState[name])
+			}
+		}
+	} else {
+		name := t.selectedSecret()
+		if name == "" {
+			return
+		}
+		src := t.config.Sources[name]
+		view.SetTitle(" [::b]describe[::-][#8a96a3](" + name + ")[-] ")
+		value := "[#8a96a3]none[-]"
+		if t.hasValue(name) {
+			value = fmt.Sprintf("[#8a96a3]%d characters (e shows it)[-]", len(*src.Value))
+		}
+		fmt.Fprintf(&sb, "%s         %s\n%s  %s\n%s         %s\n%s        %s\n%s        %s\n", k("name:"), name, k("description:"), tview.Escape(src.Description),
+			k("kind:"), src.kind(), k("state:"), t.srcState[name], k("value:"), value)
+		if src.Cmd != "" {
+			fmt.Fprintf(&sb, "%s          %s\n%s      %s, %d retries\n", k("cmd:"), tview.Escape(src.Cmd), k("timeout:"), src.timeout, src.Retries)
+		}
+		if src.StoredIn != "" {
+			fmt.Fprintf(&sb, "%s     %s\n", k("storedIn:"), tview.Escape(src.StoredIn))
+		}
+		fmt.Fprintf(&sb, "\n%s\n", k("destinations:"))
+		for _, i := range t.destsOf(name) {
+			dest := t.config.Destinations[i]
+			fmt.Fprintf(&sb, "  [%s]●[-] %-40s %-8s [%s]%s[-]\n", colorName(stateColor(t.destState[i])), tview.Escape(dest.LogPrefix), dest.Group,
+				colorName(stateColor(t.destState[i])), t.destState[i])
+		}
+	}
+	view.SetText(sb.String())
+	view.SetInputCapture(escCloses(t, "describe"))
+	t.page("describe", view, false)
+	t.app.SetFocus(view)
+}
+
+// centered puts p in the middle of the screen at the given size
+func centered(p tview.Primitive, width, height int) tview.Primitive {
+	return tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(nil, 0, 1, false).
+			AddItem(p, height, 0, true).
+			AddItem(nil, 0, 1, false), width, 0, true).
+		AddItem(nil, 0, 1, false)
+}
+
+func (t *tui) edit() {
+	if t.focusDests {
+		return
+	}
+	name := t.selectedSecret()
+	if name == "" {
+		return
+	}
+	src := t.config.Sources[name]
+	if !src.editable() {
+		t.status.SetText(fmt.Sprintf(" [#e6c446]%s is read-only: its command reads it from somewhere setup-secrets doesn't write to[-]", name))
+		return
+	}
+	form := t.editForm(name)
+	height := 9
+	if src.kind() == "manual" {
+		height = 11
+	}
+	t.page("edit", centered(form, 72, height), true)
+	t.app.SetFocus(form)
+}
+
+func (t *tui) editForm(name string) *tview.Form {
+	src := t.config.Sources[name]
+	manual := src.kind() == "manual"
+	current := ""
+	if src.Value != nil {
+		current = *src.Value
+	}
+	form := tview.NewForm()
+	form.SetFieldBackgroundColor(colorSelBg).SetButtonBackgroundColor(colorBorder).SetLabelColor(colorKey)
+	form.SetBorder(true).SetBorderColor(colorAccent).SetTitle(" [::b]edit[::-][#8a96a3](" + name + ")[-] ")
+	value := tview.NewInputField().SetLabel("Value").SetText(current).SetFieldWidth(44).SetMaskCharacter('•')
+	repeat := tview.NewInputField().SetLabel("Repeat").SetText(current).SetFieldWidth(44).SetMaskCharacter('•')
+	form.AddFormItem(value)
+	if manual {
+		form.AddFormItem(repeat)
+	}
+	form.AddCheckbox("Show", false, func(show bool) {
+		mask := '•'
+		if show {
+			mask = 0
+		}
+		value.SetMaskCharacter(mask)
+		repeat.SetMaskCharacter(mask)
+	})
+	form.AddButton("Save & store", func() {
+		if manual && value.GetText() != repeat.GetText() {
+			t.status.SetText(" [#f07178]The values differ[-]")
+			return
+		}
+		if value.GetText() == "" {
+			t.status.SetText(" [#f07178]An empty value isn't stored[-]")
+			return
+		}
+		text := value.GetText()
+		t.closePage("edit")
+		t.do(func() { t.save(name, text) })
+	})
+	form.AddButton("Cancel", func() { t.closePage("edit") })
+	form.SetCancelFunc(func() { t.closePage("edit") })
+	return form
+}
+
+// setSrc and setDest change a state from a job
+func (t *tui) setSrc(name, state string) {
+	t.queue(func() { t.srcState[name] = state; t.render() })
+}
+
+func (t *tui) setDest(i int, state string) {
+	t.queue(func() { t.destState[i] = state; t.render() })
+}
+
+func (t *tui) fetchOne(name string) {
+	src := t.config.Sources[name]
+	if src.Cmd == "" {
+		if !t.hasValue(name) {
+			t.setSrc(name, stateMissing)
+		}
+		return
+	}
+	t.setSrc(name, stateFetching)
+	if err := src.fetch(t.logs, name); err != nil {
+		t.setSrc(name, stateFailed)
+		return
+	}
+	t.setSrc(name, stateFetched)
+}
+
+func (t *tui) fetchAll() {
+	for _, name := range t.names {
+		t.fetchOne(name)
+	}
+	fmt.Fprintln(t.logs, "Fetched every secret.")
+}
+
+func (t *tui) storeDest(i int) {
+	dest := t.config.Destinations[i]
+	t.setDest(i, stateStoring)
+	switch t.config.storeOne(t.logs, dest) {
+	case storeDone:
+		t.setDest(i, stateStored)
+	case storeFailed:
+		t.setDest(i, stateFailed)
+	default:
+		t.setDest(i, stateWaiting)
+	}
+}
+
+// fetchAgain fetches the secrets with a command that the destinations need, but the one just saved
+func (t *tui) fetchAgain(dests []int, except string) {
+	var names []string
+	for _, i := range dests {
+		dest := t.config.Destinations[i]
+		for _, name := range append(slices.Clone(dest.Requires), dest.Wants...) {
+			if name != except && t.config.Sources[name] != nil && t.config.Sources[name].Cmd != "" && !slices.Contains(names, name) {
+				names = append(names, name)
+			}
+		}
+	}
+	for _, name := range names {
+		t.fetchOne(name)
+	}
+}
+
+// save keeps the value and stores it through every destination that needs it, with the other values they need
+// fetched again
+func (t *tui) save(name, value string) {
+	src := t.config.Sources[name]
+	src.Value = &value
+	state := stateEdited
+	if src.kind() == "manual" {
+		state = stateSet
+	}
+	t.setSrc(name, state)
+	fmt.Fprintf(t.logs, "%s: Saved, storing\n", name)
+	dests := t.destsOf(name)
+	t.fetchAgain(dests, name)
+	for _, i := range dests {
+		t.storeDest(i)
+	}
+}
+
+func (t *tui) retry() {
+	if t.focusDests {
+		i := t.selectedDest()
+		if i < 0 {
+			return
+		}
+		t.do(func() {
+			t.fetchAgain([]int{i}, "")
+			t.storeDest(i)
+		})
+		return
+	}
+	name := t.selectedSecret()
+	if name == "" {
+		return
+	}
+	t.do(func() {
+		t.fetchOne(name)
+		dests := t.destsOf(name)
+		t.fetchAgain(dests, name)
+		for _, i := range dests {
+			t.storeDest(i)
+		}
+	})
+}

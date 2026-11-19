@@ -14,8 +14,7 @@ func SetupAuto(config *Config) error {
 }
 
 func setupAuto(config *Config, log io.Writer) error {
-	fetchFailed := config.fetch(log)
-	storeFailed := config.store(log)
+	fetchFailed, storeFailed := config.fetchAndStore(log, 8)
 	var problems []string
 	if len(fetchFailed) > 0 {
 		problems = append(problems, "fetching "+strings.Join(fetchFailed, ", "))

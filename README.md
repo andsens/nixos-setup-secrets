@@ -116,12 +116,17 @@ runs only the destinations of that group, and fetches only what they need.
 
 ![An automatic run of the cluster group, with a source that keeps failing](docs/screenshots/auto.png)
 
-`--auto` exits with 1 when a fetch command fails, when a destination fails,
-or when a destination is skipped because a required secret with a `cmd` has
-no value. A destination waiting for a secret without a `cmd` doesn't count:
-in an automatic run, only someone typing it in can supply that value. A unit
-or a test running `--auto` fails with the real cause, in place of whatever
-was waiting for the secret failing later.
+`--auto` fetches a few sources at a time and runs each destination as soon
+as every secret it needs is in, so a source that waits for a service doesn't
+hold up the destinations that service is waiting for.
+
+It exits with 1 when a fetch command fails, when a destination fails, or
+when a destination is skipped because the command of a required secret
+failed. A secret without a value yet doesn't count: one without a `cmd`, or
+one whose `cmd` succeeds without printing anything (say, a Secret nobody has
+created yet). Only someone typing it in can supply that value. A unit or a
+test running `--auto` fails with the real cause, in place of whatever was
+waiting for the secret failing later.
 
 ## Running it automatically
 

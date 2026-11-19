@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -84,6 +85,8 @@ type tui struct {
 	logs           *tview.TextView
 	focusDests     bool
 
+	// Guards the values of the sources, which jobs write while the event loop reads them
+	mu sync.RWMutex
 	// queue runs a change of the widgets on the event loop, do runs a job off it, one at a time
 	queue func(func())
 	do    func(func())
@@ -243,6 +246,8 @@ func header(table *tview.Table, cols ...string) {
 // render redraws everything from the state: the tables with the rows linked to the selection highlighted, the
 // header, the status line and the crumbs
 func (t *tui) render() {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	linkedSecrets, linkedDests := map[string]bool{}, map[int]bool{}
 	if t.focusDests {
 		if i := t.selectedDest(); i >= 0 {
@@ -514,9 +519,11 @@ func (t *tui) describe() {
 		src := t.config.Sources[name]
 		view.SetTitle(" [::b]describe[::-][#8a96a3](" + name + ")[-] ")
 		value := "[#8a96a3]none[-]"
+		t.mu.RLock()
 		if t.hasValue(name) {
 			value = fmt.Sprintf("[#8a96a3]%d characters (e shows it)[-]", len(*src.Value))
 		}
+		t.mu.RUnlock()
 		fmt.Fprintf(&sb, "%s         %s\n%s  %s\n%s         %s\n%s        %s\n%s        %s\n", k("name:"), name, k("description:"), tview.Escape(src.Description),
 			k("kind:"), src.kind(), k("state:"), t.srcState[name], k("value:"), value)
 		if src.Cmd != "" {
@@ -575,9 +582,11 @@ func (t *tui) editForm(name string) *tview.Form {
 	src := t.config.Sources[name]
 	manual := src.kind() == "manual"
 	current := ""
+	t.mu.RLock()
 	if src.Value != nil {
 		current = *src.Value
 	}
+	t.mu.RUnlock()
 	form := tview.NewForm()
 	form.SetFieldBackgroundColor(colorSelBg).SetButtonBackgroundColor(colorBorder).SetLabelColor(colorKey)
 	form.SetBorder(true).SetBorderColor(colorAccent).SetTitle(" [::b]edit[::-][#8a96a3](" + name + ")[-] ")
@@ -625,30 +634,61 @@ func (t *tui) setDest(i int, state string) {
 func (t *tui) fetchOne(name string) {
 	src := t.config.Sources[name]
 	if src.Cmd == "" {
-		if !t.hasValue(name) {
+		t.mu.RLock()
+		has := t.hasValue(name)
+		t.mu.RUnlock()
+		if !has {
 			t.setSrc(name, stateMissing)
 		}
 		return
 	}
 	t.setSrc(name, stateFetching)
-	if err := src.fetch(t.logs, name); err != nil {
-		t.setSrc(name, stateFailed)
-		return
+	value, err := src.fetchValue(t.logs, name)
+	t.mu.Lock()
+	src.failed = err != nil
+	if err == nil {
+		src.Value = &value
 	}
-	t.setSrc(name, stateFetched)
+	t.mu.Unlock()
+	switch {
+	case err != nil:
+		t.setSrc(name, stateFailed)
+	case value == "":
+		t.setSrc(name, stateMissing)
+	default:
+		t.setSrc(name, stateFetched)
+	}
 }
 
+// fetchAll fetches a few at a time, so one source waiting for a workload doesn't hold up the others
 func (t *tui) fetchAll() {
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, 8)
 	for _, name := range t.names {
-		t.fetchOne(name)
+		wg.Go(func() {
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			t.fetchOne(name)
+		})
 	}
+	wg.Wait()
 	fmt.Fprintln(t.logs, "Fetched every secret.")
 }
 
 func (t *tui) storeDest(i int) {
 	dest := t.config.Destinations[i]
 	t.setDest(i, stateStoring)
-	switch t.config.storeOne(t.logs, dest) {
+	t.mu.RLock()
+	env, ok, fault := t.config.destinationEnv(t.logs, dest)
+	t.mu.RUnlock()
+	result := storeWaiting
+	switch {
+	case ok:
+		result = runDestination(t.logs, dest, env)
+	case fault:
+		result = storeSkippedFault
+	}
+	switch result {
 	case storeDone:
 		t.setDest(i, stateStored)
 	case storeFailed:
@@ -678,7 +718,10 @@ func (t *tui) fetchAgain(dests []int, except string) {
 // fetched again
 func (t *tui) save(name, value string) {
 	src := t.config.Sources[name]
+	t.mu.Lock()
 	src.Value = &value
+	src.failed = false
+	t.mu.Unlock()
 	state := stateEdited
 	if src.kind() == "manual" {
 		state = stateSet

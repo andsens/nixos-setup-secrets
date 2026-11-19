@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/rivo/tview"
@@ -12,8 +13,12 @@ import (
 // syncTUI runs jobs and widget changes right away, in place of a running application
 func syncTUI(config *Config) *tui {
 	t := newTUI(tview.NewApplication(), config)
-	t.queue = func(f func()) { f() }
+	// One at a time, as on the event loop
+	var mu sync.Mutex
+	t.queue = func(f func()) { mu.Lock(); defer mu.Unlock(); f() }
 	t.do = func(job func()) { job() }
+	// tview calls it from a goroutine of its own, which queue would run there and then
+	t.logs.SetChangedFunc(nil)
 	return t
 }
 

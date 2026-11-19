@@ -104,7 +104,8 @@ func (config *Config) SelectGroups(groups []string) error {
 	return nil
 }
 
-func (config *Config) fetch(log io.Writer) {
+// fetch runs the commands of the sources the destinations need and returns the names of those that failed
+func (config *Config) fetch(log io.Writer) (failed []string) {
 	fetchSources := map[string]struct{}{}
 	for _, dest := range config.Destinations {
 		for _, srcName := range dest.Wants {
@@ -129,47 +130,57 @@ func (config *Config) fetch(log io.Writer) {
 		val, err := run(log, name, src.Cmd, nil, src.Attempts)
 		if err != nil {
 			fmt.Fprintf(log, "%s: Fetching secret failed: %s\n", name, err)
+			failed = append(failed, name)
 			continue
 		}
 		value := strings.TrimSpace(string(val))
 		src.Value = &value
 	}
+	return failed
 }
 
-func (config *Config) store(log io.Writer) {
+// store runs the destinations and returns those that failed, or were skipped for a required secret that has a
+// command but no value. A destination waiting for a secret without a command isn't returned: in an automatic run
+// that value can only come from someone typing it in
+func (config *Config) store(log io.Writer) (failed []string) {
 	for _, dest := range config.Destinations {
-		env, ok := config.destinationEnv(log, dest)
+		env, ok, fault := config.destinationEnv(log, dest)
 		if !ok {
+			if fault {
+				failed = append(failed, dest.LogPrefix)
+			}
 			continue
 		}
 		fmt.Fprintf(log, "%s: Storing\n", dest.LogPrefix)
 		if _, err := run(log, dest.LogPrefix, dest.Cmd, env, dest.Attempts); err != nil {
 			fmt.Fprintf(log, "%s: Storing secret failed: %s\n", dest.LogPrefix, err)
+			failed = append(failed, dest.LogPrefix)
 		}
 	}
+	return failed
 }
 
 // destinationEnv returns the variables of the secrets a destination requires and wants, or false when a required
-// one has no value
-func (config *Config) destinationEnv(log io.Writer, dest *Destination) ([]string, bool) {
-	var env []string
-	ok := true
+// one has no value; fault says whether one of those is undefined or has a command that didn't deliver
+func (config *Config) destinationEnv(log io.Writer, dest *Destination) (env []string, ok bool, fault bool) {
+	ok = true
 	for _, srcName := range dest.Requires {
 		src, srcFound := config.Sources[srcName]
 		if !srcFound {
 			fmt.Fprintf(log, "%s: Undefined required secret \"%s\", skipping\n", dest.LogPrefix, srcName)
-			ok = false
+			ok, fault = false, true
 			continue
 		}
 		if src.Value == nil || *src.Value == "" {
 			fmt.Fprintf(log, "%s: No value for required secret \"%s\", skipping\n", dest.LogPrefix, srcName)
 			ok = false
+			fault = fault || src.Cmd != ""
 			continue
 		}
 		env = append(env, fmt.Sprintf("%s=%s", srcName, *src.Value))
 	}
 	if !ok {
-		return nil, false
+		return nil, false, fault
 	}
 	for _, srcName := range dest.Wants {
 		src, srcFound := config.Sources[srcName]
@@ -183,5 +194,5 @@ func (config *Config) destinationEnv(log io.Writer, dest *Destination) ([]string
 		}
 		env = append(env, fmt.Sprintf("%s=%s", srcName, *src.Value))
 	}
-	return env, true
+	return env, true, false
 }

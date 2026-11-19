@@ -131,3 +131,23 @@ func TestStoreEnv(t *testing.T) {
 		t.Errorf("log:\n%s", log.String())
 	}
 }
+
+func TestFailures(t *testing.T) {
+	noSleep(t)
+	config := testConfig(t, `{
+		"sources": {"OK": {"cmd": "echo ok"}, "BAD": {"cmd": "exit 1"}, "MANUAL": {}},
+		"destinations": [
+			{"logPrefix": "fine", "requires": ["OK"], "cmd": "true"},
+			{"logPrefix": "needs bad", "requires": ["BAD"], "cmd": "true"},
+			{"logPrefix": "needs manual", "requires": ["MANUAL"], "cmd": "true"},
+			{"logPrefix": "breaks", "requires": ["OK"], "cmd": "exit 2"}
+		]}`)
+	var log bytes.Buffer
+	if got := config.fetch(&log); len(got) != 1 || got[0] != "BAD" {
+		t.Errorf("fetch failures %v", got)
+	}
+	got := config.store(&log)
+	if strings.Join(got, ",") != "needs bad,breaks" {
+		t.Errorf("store failures %v\n%s", got, log.String())
+	}
+}

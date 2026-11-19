@@ -37,14 +37,14 @@ let
   groupNames = lib.unique (
     map ({ group, ... }: group) enabledDestinations ++ lib.attrNames cfg.groups
   );
-  groupUnit = group: "setup-secrets-${group}";
+  groupUnit = group: "setup-secrets@${group}";
 in
 {
   key = "${toString __curPos.file}#modules.nixos.setup-secrets";
   options.setup-secrets = {
     enable = lib.mkEnableOption "the module: its assertions, and with `autoSetup` its service and activation script. It doesn't install the CLI, which is `setup-secrets.script`";
     autoSetup = lib.mkEnableOption ''
-      automatic fetching & storing of secrets: one unit per group, `setup-secrets-<group>.service`. A group with
+      automatic fetching & storing of secrets: one instance of `setup-secrets@.service` per group, `setup-secrets@<group>.service`. A group with
       `onActivation` runs at boot before `sysinit.target` and again on every switch; the other groups are left to be
       pulled in by what they depend on'';
     groups = lib.mkOption {
@@ -163,12 +163,17 @@ in
           }) dest.requires
         ) enabledDestinations
       )
+      ++ map (group: {
+        # The group is the instance of the template, and the argument of --group through %i
+        assertion = builtins.match "[A-Za-z0-9_.-]+" group != null;
+        message = "setup-secrets: the group name \"${group}\" may contain only letters, digits, _, . and -";
+      }) groupNames
       ++ [
         {
           # Settings on the old unit, like `after`, would make a unit without ExecStart and silently drop the ordering
           assertion = !(config.systemd.services ? setup-secrets);
           message = ''
-            setup-secrets.service is gone: each group of destinations has a unit of its own, setup-secrets-<group>.service
+            setup-secrets.service is gone: each group of destinations has a unit of its own, setup-secrets@<group>.service
             (${
               lib.concatMapStringsSep ", " (group: "${groupUnit group}.service") groupNames
             }). Move the settings of
@@ -176,30 +181,33 @@ in
           '';
         }
       ];
+    # A template run with the group as its instance, and a drop-in per group with the settings of that group, which
+    # what pulls the group in adds to (systemd.services."setup-secrets@<group>")
     systemd.services = lib.mkIf cfg.autoSetup (
-      lib.listToAttrs (
+      {
+        "setup-secrets@" = {
+          description = "Fetch & store the NixOS secrets of the group %i";
+          serviceConfig = {
+            Type = "oneshot";
+            # Remains active: an onActivation group isn't pulled in again by a boot transaction queued while
+            # sysinit.target is still pending, the others stay up with what pulled them in
+            RemainAfterExit = true;
+            ExecStart = "${lib.getExe cfg.script} --auto --group %i";
+          };
+        };
+      }
+      // lib.listToAttrs (
         map (
           group:
-          let
-            onActivation = cfg.groups.${group}.onActivation or (group == "host");
-          in
           lib.nameValuePair (groupUnit group) (
             lib.mkMerge [
-              {
-                description = "Fetch & store the NixOS secrets of the group ${group}";
-                serviceConfig = {
-                  Type = "oneshot";
-                  ExecStart = "${lib.getExe cfg.script} --auto --group ${lib.escapeShellArg group}";
-                };
-              }
+              # Without it NixOS writes a whole unit, which systemd would take in place of the template
+              { overrideStrategy = "asDropin"; }
               (
-                if onActivation then
+                if cfg.groups.${group}.onActivation or (group == "host") then
                   {
-                    # Remains active, or a boot transaction queued while sysinit.target is still pending would pull the
-                    # finished oneshot in again. A switch restarts sysinit-reactivation.target before it starts any other
-                    # unit, and PartOf carries that restart over. Wanted, not required, so a failure holds up neither the
-                    # boot nor the switch
-                    serviceConfig.RemainAfterExit = true;
+                    # A switch restarts sysinit-reactivation.target before it starts any other unit, and PartOf carries
+                    # that restart over. Wanted, not required, so a failure holds up neither the boot nor the switch
                     partOf = [ "sysinit-reactivation.target" ];
                     wantedBy = [
                       "sysinit.target"
@@ -217,7 +225,6 @@ in
                 else
                   {
                     # Restarted by a switch that changes the configuration, while whatever pulled it in keeps it active
-                    serviceConfig.RemainAfterExit = true;
                     restartTriggers = [ cfg.script ];
                   }
               )

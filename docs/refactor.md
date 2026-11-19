@@ -22,7 +22,8 @@ project keeps it.
 ## Decisions
 
 - Order: units, then cleanup, then the TUI. A web frontend is in the backlog; how it would log in is undecided.
-- Units: a `group` on destinations; a source runs in every group that has a destination needing it. The host group
+- Units: a `group` on destinations; a source runs in every group that has a destination needing it. Each group is an
+  instance of the template `setup-secrets@.service`, with its settings in a drop-in. The host group
   is wanted by `sysinit.target` and `sysinit-reactivation.target` and ordered before both, so it runs at boot before
   the host secret consumers and again on every switch. The cluster group runs from a unit that k3s pulls in (`WantedBy`, `PartOf`, `After`,
   `RemainAfterExit`), so every start of k3s re-runs it. Sources and destinations take a timeout in place of the

@@ -32,7 +32,7 @@ true
 
 ## setup-secrets\.autoSetup
 
-Whether to enable automatic fetching \& storing of secrets: one unit per group, ` setup-secrets-<group>.service `\. A group with
+Whether to enable automatic fetching \& storing of secrets: one instance of ` setup-secrets@.service ` per group, ` setup-secrets@<group>.service `\. A group with
 ` onActivation ` runs at boot before ` sysinit.target ` and again on every switch; the other groups are left to be
 pulled in by what they depend on\.
 

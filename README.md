@@ -99,10 +99,11 @@ was waiting for the secret failing later.
 ## Running it automatically
 
 Turn on `setup-secrets.autoSetup` for one unit per group of destinations,
-`setup-secrets-<group>.service`. Destinations are in the group `host` unless
-they set `group`. The `host` group runs at boot, before `sysinit.target`, and
-again on every `nixos-rebuild switch` before any other unit is started. Other
-groups run when something pulls them in, which suits secrets that live in a
+`setup-secrets@<group>.service`, instances of the template
+`setup-secrets@.service`. Destinations are in the group `host` unless they set
+`group`. The `host` group runs at boot, before `sysinit.target`, and again on
+every `nixos-rebuild switch` before any other unit is started. Other groups
+run when something pulls them in, which suits secrets that live in a
 service that has to be up first:
 
 ```nix
@@ -116,7 +117,7 @@ service that has to be up first:
     }
   ];
   # Runs after every start of k3s and stops with it
-  systemd.services.setup-secrets-cluster = {
+  systemd.services."setup-secrets@cluster" = {
     wantedBy = [ "k3s.service" ];
     partOf = [ "k3s.service" ];
     after = [ "k3s.service" ];
@@ -144,7 +145,7 @@ setup-secrets.sources.PLEX_API_KEY = {
 };
 ```
 
-`journalctl -u setup-secrets-cluster` shows what a group did, one line per
+`journalctl -u setup-secrets@cluster` shows what a group did, one line per
 source and destination, prefixed with the name of the source or destination.
 
 ## Recipes

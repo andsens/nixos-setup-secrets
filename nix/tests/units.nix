@@ -40,7 +40,7 @@ pkgs.testers.runNixOSTest {
         serviceConfig.ExecStart = "${lib.getExe' pkgs.coreutils "sleep"} infinity";
       };
       # What a consumer like the k3s module does with its group's unit
-      systemd.services.setup-secrets-cluster = {
+      systemd.services."setup-secrets@cluster" = {
         wantedBy = [ "stand-in.service" ];
         partOf = [ "stand-in.service" ];
         after = [ "stand-in.service" ];
@@ -64,13 +64,13 @@ pkgs.testers.runNixOSTest {
     machine.wait_for_unit("multi-user.target")
 
     with subtest("boot: the host group runs before sysinit.target, the cluster group after the stand-in"):
-        assert ts("setup-secrets-host", "ExecMainExitTimestampMonotonic") < ts("sysinit.target", "ActiveEnterTimestampMonotonic")
+        assert ts("setup-secrets@host", "ExecMainExitTimestampMonotonic") < ts("sysinit.target", "ActiveEnterTimestampMonotonic")
         machine.succeed("test -s /run/host-secret")
-        runs = machine.succeed("journalctl -b -o cat -u setup-secrets-host | grep -c '^Host file: Storing$'").strip()
+        runs = machine.succeed("journalctl -b -o cat -u setup-secrets@host | grep -c '^Host file: Storing$'").strip()
         assert runs == "1", f"the host group ran {runs} times at boot"
         machine.wait_for_file("/run/cluster-secret", timeout=60)
-        assert ts("setup-secrets-cluster", "ExecMainStartTimestampMonotonic") > ts("stand-in", "ActiveEnterTimestampMonotonic")
-        machine.succeed("systemctl is-active setup-secrets-cluster")
+        assert ts("setup-secrets@cluster", "ExecMainStartTimestampMonotonic") > ts("stand-in", "ActiveEnterTimestampMonotonic")
+        machine.succeed("systemctl is-active setup-secrets@cluster")
 
     with subtest("switch: the host group runs again, the unchanged cluster group doesn't"):
         host, cluster = machine.succeed("cat /run/host-secret"), machine.succeed("cat /run/cluster-secret")
@@ -88,6 +88,6 @@ pkgs.testers.runNixOSTest {
         machine.succeed("systemctl restart stand-in")
         machine.wait_until_succeeds(f"test \"$(cat /run/cluster-secret)\" != '{cluster}'", timeout=30)
         machine.succeed("systemctl stop stand-in")
-        machine.fail("systemctl is-active setup-secrets-cluster")
+        machine.fail("systemctl is-active setup-secrets@cluster")
   '';
 }

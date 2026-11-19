@@ -2,6 +2,7 @@ package setupsecrets
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -9,8 +10,12 @@ import (
 // SetupAuto fetches and stores in one pass. It fails when a fetch command failed, or a destination failed or was
 // skipped for a secret that has a command; a destination waiting for a secret someone has to type in doesn't count
 func SetupAuto(config *Config) error {
-	fetchFailed := config.fetch(os.Stderr)
-	storeFailed := config.store(os.Stderr)
+	return setupAuto(config, os.Stderr)
+}
+
+func setupAuto(config *Config, log io.Writer) error {
+	fetchFailed := config.fetch(log)
+	storeFailed := config.store(log)
 	var problems []string
 	if len(fetchFailed) > 0 {
 		problems = append(problems, "fetching "+strings.Join(fetchFailed, ", "))

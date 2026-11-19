@@ -10,10 +10,22 @@ import (
 func SetupManual(config *Config) error {
 	app := tview.NewApplication()
 	app.SetTitle("NixOS Setup Secrets").EnableMouse(true)
+	root, form, logs := newScreen(app)
+	app.SetRoot(root, true)
 
+	go func() {
+		config.fetch(logs)
+		logs.Write([]byte("Done.\n"))
+		// Primitives may only be changed on the event loop, Form.Draw indexes items it sized earlier
+		app.QueueUpdateDraw(func() { buildForm(app, form, config, logs) })
+	}()
+	return app.Run()
+}
+
+// newScreen lays out the form beside the log
+func newScreen(app *tview.Application) (*tview.Grid, *tview.Form, *tview.TextView) {
 	root := tview.NewGrid()
 	root.SetRows(0).SetColumns(0, 0).SetTitle("NixOS Setup Secrets")
-	app.SetRoot(root, true)
 
 	form := tview.NewForm()
 	form.SetBorder(true).SetTitle("Loading...")
@@ -25,14 +37,7 @@ func SetupManual(config *Config) error {
 		app.QueueUpdateDraw(func() { logs.ScrollToEnd() })
 	}).SetBorder(true).SetTitle("Log")
 	root.AddItem(logs, 0, 1, 1, 1, 0, 0, false)
-
-	go func() {
-		config.fetch(logs)
-		logs.Write([]byte("Done.\n"))
-		// Primitives may only be changed on the event loop, Form.Draw indexes items it sized earlier
-		app.QueueUpdateDraw(func() { buildForm(app, form, config, logs) })
-	}()
-	return app.Run()
+	return root, form, logs
 }
 
 func buildForm(app *tview.Application, form *tview.Form, config *Config, logs *tview.TextView) {

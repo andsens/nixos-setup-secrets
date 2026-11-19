@@ -48,18 +48,8 @@ func TestScreenshots(t *testing.T) {
 	}
 	noSleep(t)
 
-	// The form, after the fetch, as `setup-secrets` shows it
-	config := testConfig(t, screenshotConfig)
-	app := tview.NewApplication()
-	root, form, logs := newScreen(app)
-	config.fetch(logs)
-	logs.Write([]byte("Done.\n"))
-	buildForm(app, form, config, logs)
-	form.SetFocus(5)
-	writeScreenshot(t, filepath.Join(dir, "form.svg"), root, form, 128, 26)
-
 	// An automatic run of one group, as its unit runs it
-	config = testConfig(t, screenshotConfig)
+	config := testConfig(t, screenshotConfig)
 	if err := config.SelectGroups([]string{"cluster"}); err != nil {
 		t.Fatal(err)
 	}

@@ -80,8 +80,6 @@ Opens a terminal form: sources with a `cmd` are fetched and pre-filled,
 everything else is left for you to type in. Hit "Save" to run the
 destinations.
 
-![The form: fetched values masked on the left, the fetch log on the right](docs/screenshots/form.png)
-
 ```
 $ sudo setup-secrets --auto
 ```

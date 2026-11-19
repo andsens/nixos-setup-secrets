@@ -15,15 +15,23 @@ jobs:
   nix:
     runs-on: ubuntu-latest
     steps:
+    # The VM test under the NixOS test driver needs KVM. The mode systemd gives /dev/kvm upstream: a group won't do, as
+    # Nix drops the supplementary groups of sandboxed builds
+    - name: Enable KVM
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
     - name: Checkout
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Install Nix
       uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       with:
-        extra_nix_config: experimental-features = nix-command flakes
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+          system-features = kvm nixos-test benchmark big-parallel
     - name: Check the flake
-      run: nix flake check
-    # The flake defines no checks, so flake check only evaluates
+      run: nix flake check -L
     - name: Build the packages
       run: |
         # Quoted, since names like docopt.sh would otherwise be attribute paths

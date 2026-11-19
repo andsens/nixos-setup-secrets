@@ -32,7 +32,9 @@ true
 
 ## setup-secrets\.autoSetup
 
-Whether to enable automatic fetching \& storing of secrets\.
+Whether to enable automatic fetching \& storing of secrets: one unit per group, ` setup-secrets-<group>.service `\. A group with
+` onActivation ` runs at boot before ` sysinit.target ` and again on every switch; the other groups are left to be
+pulled in by what they depend on\.
 
 
 
@@ -116,6 +118,30 @@ string
 
 
 
+## setup-secrets\.destinations\.\*\.group
+
+
+
+The group the destination is in, which decides the unit that runs it (see ` groups `)\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"host"
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
 ## setup-secrets\.destinations\.\*\.logPrefix
 
 
@@ -164,6 +190,54 @@ list of string
 
 
 
+## setup-secrets\.destinations\.\*\.retries
+
+
+
+How often a failed command to create or update the secret is tried again, after 1s, 2s, 4s and so on up to 30s between tries\.
+
+
+
+*Type:*
+unsigned integer, meaning >=0
+
+
+
+*Default:*
+
+```nix
+0
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
+## setup-secrets\.destinations\.\*\.timeout
+
+
+
+How long the command to create or update the secret may run, as a Go duration (` 30s `, ` 2m `)\. A timeout counts as a failed try\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"30s"
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
 ## setup-secrets\.destinations\.\*\.wants
 
 
@@ -181,6 +255,59 @@ list of string
 
 ```nix
 [ ]
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
+## setup-secrets\.groups
+
+
+
+Settings of the groups the destinations are in\. A group exists as soon as a destination is in it, so it needs
+an entry here only to change its settings\.
+
+
+
+*Type:*
+attribute set of (submodule)
+
+
+
+*Default:*
+
+```nix
+{ }
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
+## setup-secrets\.groups\.\<name>\.onActivation
+
+
+
+Whether the group runs at boot, ordered before ` sysinit.target `, and on every switch, before the switch
+starts or restarts any other unit (through ` sysinit-reactivation.target `)\. Its unit has no default
+dependencies, so its commands can’t count on the network or other services\. Without it the group’s
+unit runs only when something pulls it in, e\.g\. ` wantedBy ` and ` partOf ` the service its commands talk
+to, and again whenever its configuration changes while it is active\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+name == "host"
 ```
 
 *Declared by:*
@@ -293,6 +420,54 @@ string
 
 ```nix
 "‹name›"
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
+## setup-secrets\.sources\.\<name>\.retries
+
+
+
+How often a failed command to retrieve the secret is tried again, after 1s, 2s, 4s and so on up to 30s between tries\.
+
+
+
+*Type:*
+unsigned integer, meaning >=0
+
+
+
+*Default:*
+
+```nix
+0
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
+## setup-secrets\.sources\.\<name>\.timeout
+
+
+
+How long the command to retrieve the secret may run, as a Go duration (` 30s `, ` 2m `)\. A timeout counts as a failed try\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"30s"
 ```
 
 *Declared by:*

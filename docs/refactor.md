@@ -22,12 +22,12 @@ project keeps it.
 ## Decisions
 
 - Order: units, then cleanup, then the TUI. A web frontend is in the backlog; how it would log in is undecided.
-- Units: a `group` on sources and destinations. The host group hooks into `sysinit-reactivation.target`
-  (`requiredBy`, `before`, `restartTriggers`), so a switch re-runs it, and runs at boot before the host secret
-  consumers. The cluster group runs from a unit that k3s pulls in (`WantedBy`, `PartOf`, `After`,
-  `RemainAfterExit`), so every start of k3s re-runs it. Its sources and destinations retry with backoff until a
-  deadline, timeouts are set per source and destination in place of the fixed 5 s, and a source that execs into a
-  workload waits for its rollout first.
+- Units: a `group` on destinations; a source runs in every group that has a destination needing it. The host group
+  is wanted by `sysinit.target` and `sysinit-reactivation.target` and ordered before both, so it runs at boot before
+  the host secret consumers and again on every switch. The cluster group runs from a unit that k3s pulls in (`WantedBy`, `PartOf`, `After`,
+  `RemainAfterExit`), so every start of k3s re-runs it. Sources and destinations take a timeout in place of the
+  fixed 5 s and a number of retries with backoff. Waiting for a workload to roll out before exec-ing into it is part
+  of the source command, which the consumer helpers write.
 - Cleanup: destinations declare their outputs (a file path, a kube `namespace/name`, a credstore name). Kube Secrets
   written through the helpers are labeled `app.kubernetes.io/managed-by: setup-secrets`. An output is old when it
   exists in a managed place and no enabled destination declares it. `cleanup` lists them and `cleanup --delete`
@@ -62,7 +62,7 @@ project keeps it.
 
 1. Layout: the Go module to the repository root, the package source and Dependabot pointed at it; fix the
    assertion message, which read the nonexistent `logEntry`.
-2. Groups and units, timeouts, retries and `waitFor`, with a VM test: a switch re-runs the host unit, the cluster
+2. Groups and units, timeouts and retries, with a VM test: a switch re-runs the host unit, the cluster
    unit follows a stand-in for k3s.
 3. Consumers move to the groups (their helpers set `group` and `storedIn`).
 4. The state file under `/var/lib/setup-secrets`, declared outputs, `cleanup` and `--delete`.

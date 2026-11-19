@@ -48,6 +48,7 @@
               inherit pkgs;
               paths."docs/options.md" = options-docs;
             };
+            checks.units = import ./nix/tests/units.nix { inherit self pkgs; };
             packages = {
               nixos-setup-secrets = pkgs.callPackage ./nix/modules/default/package.nix { };
               options-docs = options-docs;

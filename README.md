@@ -84,10 +84,39 @@ destinations.
 $ setup-secrets --auto
 ```
 
-Skips the form entirely -- fetches and stores in one pass. Turn on
-`setup-secrets.autoSetup` to also run this automatically, both as a
-`nixos-rebuild switch` activation script and as a `setup-secrets.service`
-unit at boot.
+Skips the form entirely -- fetches and stores in one pass. `--group <name>`
+runs only the destinations of that group.
+
+## Running it automatically
+
+Turn on `setup-secrets.autoSetup` for one unit per group of destinations,
+`setup-secrets-<group>.service`. Destinations are in the group `host` unless
+they set `group`. The `host` group runs at boot, before `sysinit.target`, and
+again on every `nixos-rebuild switch` before any other unit is started. Other
+groups run when something pulls them in, which suits secrets that live in a
+service that has to be up first:
+
+```nix
+{
+  setup-secrets.destinations = [
+    {
+      logPrefix = "App API key";
+      group = "cluster";
+      requires = [ "API_KEY" ];
+      cmd = "...";
+    }
+  ];
+  # Runs after every start of k3s and stops with it
+  systemd.services.setup-secrets-cluster = {
+    wantedBy = [ "k3s.service" ];
+    partOf = [ "k3s.service" ];
+    after = [ "k3s.service" ];
+  };
+}
+```
+
+Sources and destinations take a `timeout` (default `30s`) and a number of
+`retries` with backoff, for commands that talk to something still starting.
 
 ## User passwords
 

@@ -9,8 +9,9 @@ import (
 )
 
 type Params struct {
-	Auto    bool `help:"Don't show edit dialog, fetch the secrets and immediately store them"`
-	Verbose bool `help:"Turn on verbose logging"`
+	Auto    bool     `help:"Don't show edit dialog, fetch the secrets and immediately store them"`
+	Group   []string `help:"Only run the destinations of this group, and fetch only what they need. Repeatable"`
+	Verbose bool     `help:"Turn on verbose logging"`
 }
 
 var params Params
@@ -23,6 +24,10 @@ func main() {
 	}
 	config, err := setupsecrets.GetConfig()
 	if err != nil {
+		slog.Error(err.Error())
+		os.Exit(1)
+	}
+	if err = config.SelectGroups(params.Group); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}

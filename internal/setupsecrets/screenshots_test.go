@@ -6,6 +6,7 @@ import (
 	"html"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,27 +18,32 @@ import (
 // writes them as SVG. The values are made up.
 const screenshotConfig = `{
 	"sources": {
-		"SONARR_API_KEY": {"cmd": "echo 3c1f6a9e0d2b47c58e91a7f4b6d20c3e"},
-		"RADARR_API_KEY": {"cmd": "echo 9a7e2c41f0b84d6e93a1c5d7e2f80b4a"},
-		"PLEX_API_KEY": {"cmd": "echo 'deploy/plex: 0 of 1 updated replicas available' >&2; exit 1", "retries": 2},
-		"INWX_USERNAME": {"cmd": "echo homelab-dns"},
-		"INWX_PASSWORD": {"cmd": "echo vT7pQ2xLm9RkW4sE"},
-		"POSTGRESQL_PASSWORD_GRAFANA": {"cmd": "echo Hn3kXq8ZpL2wRt6Y"},
-		"RESTIC_DEFAULT_PASSWORD": {"cmd": "echo correct-horse-battery-staple"},
-		"ZED_PUSHOVER_TOKEN": {"cmd": "echo azGDORePK8gMaC0QOYAMyEEuzJnyUi"},
+		"SONARR_API_KEY": {"description": "Sonarr API Key", "cmd": "echo 3c1f6a9e0d2b47c58e91a7f4b6d20c3e"},
+		"RADARR_API_KEY": {"description": "Radarr API Key", "cmd": "echo 9a7e2c41f0b84d6e93a1c5d7e2f80b4a"},
+		"PLEX_API_KEY": {"description": "Plex API Key", "cmd": "echo 'deploy/plex: 0 of 1 updated replicas available' >&2; exit 1", "retries": 2},
+		"INWX_USERNAME": {"description": "INWX Username", "cmd": "echo homelab-dns", "storedIn": "kube cert-manager/inwx-credentials"},
+		"INWX_PASSWORD": {"description": "INWX Password", "cmd": "echo vT7pQ2xLm9RkW4sE", "storedIn": "kube cert-manager/inwx-credentials"},
+		"POSTGRESQL_PASSWORD_GRAFANA": {"description": "PostgreSQL password of grafana", "cmd": "echo Hn3kXq8ZpL2wRt6Y", "storedIn": "kube postgresql/grafana-password"},
+		"RESTIC_DEFAULT_PASSWORD": {"description": "Encryption password for the restic default backup", "cmd": "echo correct-horse-battery-staple", "storedIn": "/etc/secrets.d/restic-default-encryption.key"},
+		"ZED_PUSHOVER_TOKEN": {"description": "ZFS Event Daemon Pushover token", "cmd": "echo azGDORePK8gMaC0QOYAMyEEuzJnyUi", "storedIn": "/etc/secrets.d/pushover-credentials.env"},
 		"SMB_PW_claude": {"description": "SMB Password for claude"},
 		"USER_PW_anders": {"description": "Password for anders"}
 	},
 	"destinations": [
 		{"logPrefix": "Sonarr configuration key", "group": "cluster", "requires": ["SONARR_API_KEY"], "cmd": "true"},
 		{"logPrefix": "Homepage (SONARR_API_KEY)", "group": "cluster", "requires": ["SONARR_API_KEY"], "cmd": "true"},
+		{"logPrefix": "Radarr configuration key", "group": "cluster", "requires": ["RADARR_API_KEY"], "cmd": "true"},
+		{"logPrefix": "Homepage (RADARR_API_KEY)", "group": "cluster", "requires": ["RADARR_API_KEY"], "cmd": "true"},
+		{"logPrefix": "Plex API key", "group": "cluster", "requires": ["PLEX_API_KEY"], "cmd": "true"},
 		{"logPrefix": "Plex integration keys", "group": "cluster", "requires": ["PLEX_API_KEY", "RADARR_API_KEY", "SONARR_API_KEY"], "cmd": "true"},
+		{"logPrefix": "Flood integration keys", "group": "cluster", "requires": ["RADARR_API_KEY", "SONARR_API_KEY"], "cmd": "true"},
 		{"logPrefix": "cert-manager (INWX Credentials)", "group": "cluster", "requires": ["INWX_USERNAME", "INWX_PASSWORD"], "cmd": "true"},
+		{"logPrefix": "external-dns (INWX Credentials)", "group": "cluster", "requires": ["INWX_USERNAME", "INWX_PASSWORD"], "cmd": "true"},
 		{"logPrefix": "PostgreSQL password of grafana", "group": "cluster", "requires": ["POSTGRESQL_PASSWORD_GRAFANA"], "cmd": "true"},
-		{"logPrefix": "Restic default backup encryption password", "requires": ["RESTIC_DEFAULT_PASSWORD"], "cmd": "true"},
-		{"logPrefix": "ZFS Event Daemon Pushover credentials", "requires": ["ZED_PUSHOVER_TOKEN"], "cmd": "true"},
-		{"logPrefix": "SMB Password for claude", "requires": ["SMB_PW_claude"], "cmd": "true"},
-		{"logPrefix": "Password for anders", "requires": ["USER_PW_anders"], "cmd": "true"}
+		{"logPrefix": "Restic default backup encryption password", "group": "host", "requires": ["RESTIC_DEFAULT_PASSWORD"], "cmd": "true"},
+		{"logPrefix": "ZFS Event Daemon Pushover credentials", "group": "host", "requires": ["ZED_PUSHOVER_TOKEN"], "cmd": "true"},
+		{"logPrefix": "SMB Password for claude", "group": "host", "requires": ["SMB_PW_claude"], "cmd": "true"},
+		{"logPrefix": "Password for anders", "group": "host", "requires": ["USER_PW_anders"], "cmd": "true"}
 	]
 }`
 
@@ -47,6 +53,36 @@ func TestScreenshots(t *testing.T) {
 		t.Skip("SETUP_SECRETS_SCREENSHOTS is not set")
 	}
 	noSleep(t)
+
+	// The TUI, after the fetch and a retry of every destination
+	shot := func(name string, prepare func(t *tui) tview.Primitive) {
+		config := testConfig(t, screenshotConfig)
+		ui := syncTUI(config)
+		ui.host = "nas"
+		ui.fetchAll()
+		for i := range config.Destinations {
+			ui.storeDest(i)
+		}
+		root := prepare(ui)
+		writeScreenshot(t, filepath.Join(dir, name+".svg"), root, nil, 160, 30)
+	}
+	shot("secrets", func(ui *tui) tview.Primitive {
+		ui.secrets.Select(1+slices.Index(ui.names, "SONARR_API_KEY"), 0)
+		ui.render()
+		return ui.pages
+	})
+	shot("destinations", func(ui *tui) tview.Primitive {
+		ui.focusDests = true
+		ui.dests.Select(6, 0)
+		ui.render()
+		return ui.pages
+	})
+	shot("edit", func(ui *tui) tview.Primitive {
+		ui.secrets.Select(1+slices.Index(ui.names, "INWX_PASSWORD"), 0)
+		ui.render()
+		ui.edit()
+		return ui.pages
+	})
 
 	// An automatic run of one group, as its unit runs it
 	config := testConfig(t, screenshotConfig)

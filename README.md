@@ -76,9 +76,36 @@ missing.
 $ sudo setup-secrets
 ```
 
-Opens a terminal form: sources with a `cmd` are fetched and pre-filled,
-everything else is left for you to type in. Hit "Save" to run the
-destinations.
+Opens a TUI with every secret on the left and every destination on the
+right. Sources with a `cmd` are fetched when it starts; nothing is stored
+until you ask. Selecting a secret highlights the destinations that need it,
+and `tab` turns it around: selecting a destination highlights the secrets it
+needs, with what keeps it waiting at the bottom.
+
+![The secrets pane: SONARR_API_KEY selected, the four destinations that need it highlighted](docs/screenshots/secrets.png)
+
+![The destinations pane: Plex integration keys selected, waiting for PLEX_API_KEY](docs/screenshots/destinations.png)
+
+`e` edits a secret and stores it right away through the destinations that
+need it, fetching the other values they need again first. There is no
+separate save step. A secret can be edited when it has no `cmd`, or when
+the source names the place it reads the value back from with `storedIn`, so
+the edit sticks. A source that reads from somewhere setup-secrets never
+writes (an API key kept in the configuration of a service) is shown
+read-only: an edit would be fetched over on the next run.
+
+![Editing INWX_PASSWORD, which is read back from a Kubernetes Secret](docs/screenshots/edit.png)
+
+| Key     | What it does                                                        |
+|---------|---------------------------------------------------------------------|
+| `tab`   | Switch between the secrets and the destinations                     |
+| `e`     | Edit the selected secret, and store it                              |
+| `r`     | Fetch the selected secret again and run the destinations that need it, or run the selected destination |
+| `enter` | Describe the selection: commands, `storedIn`, what it is linked to  |
+| `l`     | The log of everything fetched and stored                            |
+| `q`     | Quit (or close the log or description)                              |
+
+Values are masked unless you tick "Show" while editing.
 
 ```
 $ sudo setup-secrets --auto
@@ -156,7 +183,11 @@ value across runs, and the form shows it pre-filled:
 
 ```nix
 setup-secrets = {
-  sources.RESTIC_DEFAULT_PASSWORD.cmd = "cat /etc/secrets.d/restic-default-encryption.key";
+  sources.RESTIC_DEFAULT_PASSWORD = {
+    cmd = "cat /etc/secrets.d/restic-default-encryption.key";
+    # The TUI lets you edit it, as the edit is read back from here
+    storedIn = "/etc/secrets.d/restic-default-encryption.key";
+  };
   destinations = [
     {
       logPrefix = "Restic default backup encryption password";

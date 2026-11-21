@@ -218,7 +218,9 @@ in
     systemd.tmpfiles.rules = [ "d ${dirOf cfg.stateFile} 0700 root root -" ];
     assertions =
       map (output: {
-        assertion = cfg.outputKinds ? ${lib.head (lib.splitString ":" output)};
+        # Without the context of a store path in the id, which an attribute name can't have
+        assertion =
+          cfg.outputKinds ? ${lib.head (lib.splitString ":" (builtins.unsafeDiscardStringContext output))};
         message = "setup-secrets: the output ${output} has a kind that setup-secrets.outputKinds doesn't define";
       }) (lib.unique (lib.concatMap ({ outputs, ... }: outputs) enabledDestinations))
       ++ lib.mapAttrsToList (logPrefix: dests: {

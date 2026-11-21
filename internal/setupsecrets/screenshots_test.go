@@ -18,13 +18,13 @@ import (
 // writes them as SVG. The values are made up.
 const screenshotConfig = `{
 	"sources": {
-		"SONARR_API_KEY": {"description": "Sonarr API Key", "cmd": "echo 3c1f6a9e0d2b47c58e91a7f4b6d20c3e"},
-		"RADARR_API_KEY": {"description": "Radarr API Key", "cmd": "echo 9a7e2c41f0b84d6e93a1c5d7e2f80b4a"},
+		"SONARR_API_KEY": {"description": "Sonarr API Key", "cmd": "echo 3c1f6a9e0d2b47c58e91a7f4b6d20c3e", "same": "echo 1761854520"},
+		"RADARR_API_KEY": {"description": "Radarr API Key", "cmd": "echo 9a7e2c41f0b84d6e93a1c5d7e2f80b4a", "same": "echo 1761854640"},
 		"PLEX_API_KEY": {"description": "Plex API Key", "cmd": "echo 'deploy/plex: 0 of 1 updated replicas available' >&2; exit 1", "retries": 2},
-		"INWX_USERNAME": {"description": "INWX Username", "cmd": "echo homelab-dns", "storedIn": "kube cert-manager/inwx-credentials"},
-		"INWX_PASSWORD": {"description": "INWX Password", "cmd": "echo vT7pQ2xLm9RkW4sE", "storedIn": "kube cert-manager/inwx-credentials"},
-		"POSTGRESQL_PASSWORD_GRAFANA": {"description": "PostgreSQL password of grafana", "cmd": "echo Hn3kXq8ZpL2wRt6Y", "storedIn": "kube postgresql/grafana-password"},
-		"RESTIC_DEFAULT_PASSWORD": {"description": "Encryption password for the restic default backup", "cmd": "echo correct-horse-battery-staple", "storedIn": "/etc/secrets.d/restic-default-encryption.key"},
+		"INWX_USERNAME": {"description": "INWX Username", "cmd": "echo homelab-dns", "same": "echo 4410", "storedIn": "kube cert-manager/inwx-credentials"},
+		"INWX_PASSWORD": {"description": "INWX Password", "cmd": "echo vT7pQ2xLm9RkW4sE", "same": "echo 4410", "storedIn": "kube cert-manager/inwx-credentials"},
+		"POSTGRESQL_PASSWORD_GRAFANA": {"description": "PostgreSQL password of grafana", "cmd": "echo Hn3kXq8ZpL2wRt6Y", "same": "echo 1187", "storedIn": "kube postgresql/grafana-password"},
+		"RESTIC_DEFAULT_PASSWORD": {"description": "Encryption password for the restic default backup", "cmd": "echo correct-horse-battery-staple", "same": "echo 1763575813", "storedIn": "/etc/secrets.d/restic-default-encryption.key"},
 		"ZED_PUSHOVER_TOKEN": {"description": "ZFS Event Daemon Pushover token", "cmd": "echo azGDORePK8gMaC0QOYAMyEEuzJnyUi", "storedIn": "/etc/secrets.d/pushover-credentials.env"},
 		"SMB_PW_claude": {"description": "SMB Password for claude"},
 		"USER_PW_anders": {"description": "Password for anders"}
@@ -64,7 +64,7 @@ func TestScreenshots(t *testing.T) {
 			ui.storeDest(i)
 		}
 		root := prepare(ui)
-		writeScreenshot(t, filepath.Join(dir, name+".svg"), root, nil, 160, 30)
+		writeScreenshot(t, filepath.Join(dir, name+".svg"), root, nil, 170, 30)
 	}
 	shot("secrets", func(ui *tui) tview.Primitive {
 		ui.secrets.Select(1+slices.Index(ui.names, "SONARR_API_KEY"), 0)
@@ -92,7 +92,7 @@ func TestScreenshots(t *testing.T) {
 	var out bytes.Buffer
 	out.WriteString("[::b]# setup-secrets --auto --group cluster[::-]\n")
 	var log bytes.Buffer
-	err := setupAuto(config, &log)
+	err := setupAuto(config, &log, false)
 	out.WriteString(tview.Escape(log.String()))
 	fmt.Fprintf(&out, "[red]2026/11/19 21:04:13 ERROR %s[-]\n[::b]# echo $?[::-]\n1\n", tview.Escape(err.Error()))
 	term := tview.NewTextView().SetDynamicColors(true).SetText(out.String())

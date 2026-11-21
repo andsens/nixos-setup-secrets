@@ -29,9 +29,9 @@ project keeps it.
   `RemainAfterExit`), so every start of k3s re-runs it. Sources and destinations take a timeout in place of the
   fixed 5 s and a number of retries with backoff. Waiting for a workload to roll out before exec-ing into it is part
   of the source command, which the consumer helpers write.
-- Cleanup: destinations declare their outputs (a file path, a kube `namespace/name`, a credstore name). Kube Secrets
-  written through the helpers are labeled `app.kubernetes.io/managed-by: setup-secrets`. An output is old when it
-  exists in a managed place and no enabled destination declares it. `cleanup` lists them and `cleanup --delete`
+- Cleanup: destinations declare their outputs as `kind:id`, with output kinds in the module that say how to check and
+  delete them (`file` built in). setup-secrets records every output it writes in its state file; an output is old
+  when the state has it and no enabled destination declares it, so cleanup only touches what setup-secrets wrote. `cleanup` lists them and `cleanup --delete`
   removes them. It never runs on boot or switch: a module enabled again would get a newly generated value, a
   database password for instance, that no longer matches what the service has.
 - No-op runs, opt-in:

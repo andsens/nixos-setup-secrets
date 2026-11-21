@@ -13,8 +13,13 @@ import (
 )
 
 type Config struct {
-	Sources      map[string]*Source `json:"sources"`
-	Destinations []*Destination     `json:"destinations"`
+	Sources      map[string]*Source     `json:"sources"`
+	Destinations []*Destination         `json:"destinations"`
+	OutputKinds  map[string]*OutputKind `json:"outputKinds"`
+	// Every destination, before SelectGroups narrows Destinations: what cleanup compares the state with
+	all []*Destination
+	// Where the state is kept, empty for none
+	statePath string
 }
 
 // Attempts holds how long a command may run and how often it is retried after a failure
@@ -29,6 +34,8 @@ type Source struct {
 	Cmd         string `json:"cmd"`
 	// Where a destination stores the value that Cmd reads back, which makes an edited value stick
 	StoredIn string `json:"storedIn"`
+	// Prints a cheap token that changes when the value does, without fetching it
+	Same string `json:"same"`
 	Attempts
 	Value *string
 	// Whether the last run of Cmd failed, as opposed to succeeding without printing a value
@@ -41,7 +48,16 @@ type Destination struct {
 	Requires  []string `json:"requires"`
 	Wants     []string `json:"wants"`
 	Cmd       string   `json:"cmd"`
+	// What the command writes, as kind:id
+	Outputs []string `json:"outputs"`
 	Attempts
+}
+
+// OutputKind holds the commands that check and delete an output of a kind, given its id as $OUTPUT. Exists exits 0
+// when the output is there and 1 when it isn't; anything else is an error
+type OutputKind struct {
+	Exists string `json:"exists"`
+	Delete string `json:"delete"`
 }
 
 const defaultTimeout = 30 * time.Second
@@ -66,7 +82,12 @@ func GetConfig() (*Config, error) {
 	if rawConfig == "" {
 		return nil, fmt.Errorf("$NIXOS_SETUP_SECRETS_CONFIG is not set or empty")
 	}
-	return parseConfig([]byte(rawConfig))
+	config, err := parseConfig([]byte(rawConfig))
+	if err != nil {
+		return nil, err
+	}
+	config.statePath = os.Getenv("NIXOS_SETUP_SECRETS_STATE")
+	return config, nil
 }
 
 func parseConfig(rawConfig []byte) (*Config, error) {
@@ -83,7 +104,13 @@ func parseConfig(rawConfig []byte) (*Config, error) {
 		if err := dest.parse(); err != nil {
 			return nil, fmt.Errorf("%s: %w", dest.LogPrefix, err)
 		}
+		for _, output := range dest.Outputs {
+			if _, _, ok := strings.Cut(output, ":"); !ok {
+				return nil, fmt.Errorf("%s: output %q isn't kind:id", dest.LogPrefix, output)
+			}
+		}
 	}
+	config.all = slices.Clone(config.Destinations)
 	return &config, nil
 }
 
@@ -107,35 +134,6 @@ func (config *Config) SelectGroups(groups []string) error {
 		return !slices.Contains(groups, dest.Group)
 	})
 	return nil
-}
-
-// fetch runs the commands of the sources the destinations need and returns the names of those that failed
-func (config *Config) fetch(log io.Writer) (failed []string) {
-	fetchSources := map[string]struct{}{}
-	for _, dest := range config.Destinations {
-		for _, srcName := range dest.Wants {
-			fetchSources[srcName] = struct{}{}
-		}
-		for _, srcName := range dest.Requires {
-			fetchSources[srcName] = struct{}{}
-		}
-	}
-	for _, name := range slices.Sorted(maps.Keys(config.Sources)) {
-		src := config.Sources[name]
-		if _, ok := fetchSources[name]; !ok {
-			fmt.Fprintf(log, "%s: Not required or needed by any destination, omitting\n", name)
-			delete(config.Sources, name)
-			continue
-		}
-		if src.Cmd == "" {
-			fmt.Fprintf(log, "%s: Has no fetch command, skipping\n", name)
-			continue
-		}
-		if err := src.fetch(log, name); err != nil {
-			failed = append(failed, name)
-		}
-	}
-	return failed
 }
 
 // fetch runs the command of the source and keeps what it prints as the value
@@ -168,16 +166,9 @@ func (dest *Destination) Needs(name string) bool {
 	return slices.Contains(dest.Requires, name) || slices.Contains(dest.Wants, name)
 }
 
-// store runs the destinations and returns those that failed, or were skipped for a required secret that has a
-// command but no value. A destination waiting for a secret without a command isn't returned: in an automatic run
-// that value can only come from someone typing it in
-func (config *Config) store(log io.Writer) (failed []string) {
-	for _, dest := range config.Destinations {
-		if result := config.storeOne(log, dest); result == storeFailed || result == storeSkippedFault {
-			failed = append(failed, dest.LogPrefix)
-		}
-	}
-	return failed
+// secrets lists what the destination requires and wants
+func (dest *Destination) secrets() []string {
+	return append(slices.Clone(dest.Requires), dest.Wants...)
 }
 
 type storeResult int
@@ -212,38 +203,28 @@ func runDestination(log io.Writer, dest *Destination, env []string) storeResult 
 	return storeDone
 }
 
-// fetchAndStore fetches the sources a few at a time and runs each destination as soon as every secret it requires
-// or wants is fetched, so a source that waits for a workload doesn't hold up the destinations that workload waits for.
-// It returns the sources that failed, and the destinations that failed or were skipped for a secret whose command
-// failed
-func (config *Config) fetchAndStore(log io.Writer, workers int) (failedSources, failedDests []string) {
-	needed := map[string]bool{}
-	for _, dest := range config.Destinations {
-		for _, name := range append(slices.Clone(dest.Requires), dest.Wants...) {
-			needed[name] = true
-		}
-	}
+// fetchAndStore fetches what the destinations need a few at a time and runs each destination as soon as every secret
+// it requires or wants is fetched, so a source that waits for a workload doesn't hold up the destinations that
+// workload waits for. It returns the sources that failed, the destinations that failed or were skipped for a secret
+// whose command failed, and the destinations it stored
+func (config *Config) fetchAndStore(log io.Writer, dests []*Destination, workers int) (failedSources, failedDests []string, stored []*Destination) {
 	pending := map[string]bool{}
-	for _, name := range slices.Sorted(maps.Keys(config.Sources)) {
-		switch {
-		case !needed[name]:
-			fmt.Fprintf(log, "%s: Not required or needed by any destination, omitting\n", name)
-			delete(config.Sources, name)
-		case config.Sources[name].Cmd == "":
-			fmt.Fprintf(log, "%s: Has no fetch command, skipping\n", name)
-		default:
-			pending[name] = true
+	for _, dest := range dests {
+		for _, name := range dest.secrets() {
+			if src, ok := config.Sources[name]; ok && src.Cmd != "" {
+				pending[name] = true
+			}
 		}
 	}
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, workers)
-	started := make([]bool, len(config.Destinations))
+	started := make([]bool, len(dests))
 	// startReady starts the destinations whose secrets are all fetched; mu is held
 	startReady := func() {
-		for i, dest := range config.Destinations {
-			if started[i] || slices.ContainsFunc(append(slices.Clone(dest.Requires), dest.Wants...), func(name string) bool { return pending[name] }) {
+		for i, dest := range dests {
+			if started[i] || slices.ContainsFunc(dest.secrets(), func(name string) bool { return pending[name] }) {
 				continue
 			}
 			started[i] = true
@@ -251,10 +232,13 @@ func (config *Config) fetchAndStore(log io.Writer, workers int) (failedSources, 
 				slots <- struct{}{}
 				result := config.storeOne(log, dest)
 				<-slots
-				if result == storeFailed || result == storeSkippedFault {
-					mu.Lock()
+				mu.Lock()
+				defer mu.Unlock()
+				switch result {
+				case storeDone:
+					stored = append(stored, dest)
+				case storeFailed, storeSkippedFault:
 					failedDests = append(failedDests, dest.LogPrefix)
-					mu.Unlock()
 				}
 			})
 		}
@@ -280,7 +264,7 @@ func (config *Config) fetchAndStore(log io.Writer, workers int) (failedSources, 
 	wg.Wait()
 	slices.Sort(failedSources)
 	slices.Sort(failedDests)
-	return failedSources, failedDests
+	return failedSources, failedDests, stored
 }
 
 // destinationEnv returns the variables of the secrets a destination requires and wants, or false when a required

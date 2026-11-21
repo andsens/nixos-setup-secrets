@@ -102,6 +102,8 @@ read-only: an edit would be fetched over on the next run.
 | `e`     | Edit the selected secret, and store it                              |
 | `r`     | Fetch the selected secret again and run the destinations that need it, or run the selected destination |
 | `enter` | Describe the selection: commands, `storedIn`, what it is linked to  |
+| `n`     | Dry run: mark each destination as one `--changed-only` would run or skip, with the reason |
+| `o`     | The orphans: outputs no destination declares any more; `d` deletes one |
 | `l`     | The log of everything fetched and stored                            |
 | `q`     | Quit (or close the log or description)                              |
 
@@ -179,6 +181,72 @@ setup-secrets.sources.PLEX_API_KEY = {
 
 `journalctl -u setup-secrets@cluster` shows what a group did, one line per
 source and destination, prefixed with the name of the source or destination.
+
+## Only what changed
+
+A run with `--changed-only`, which the units pass, skips the destinations
+that would store the same thing again. A destination runs when it never
+stored, when the command of the destination changed, when one of the
+declared `outputs` is gone, or when a secret it needs changed. A secret
+changed when the `cmd` of the source did, or when the `same` command prints
+a different token: something cheap that changes with the value, without
+fetching it.
+
+```nix
+setup-secrets = {
+  sources.RESTIC_DEFAULT_PASSWORD = {
+    cmd = "cat /etc/secrets.d/restic-default-encryption.key";
+    same = "stat -c %Y /etc/secrets.d/restic-default-encryption.key";
+  };
+  destinations = [
+    {
+      logPrefix = "Restic default backup encryption password";
+      requires = [ "RESTIC_DEFAULT_PASSWORD" ];
+      cmd = ''printf "%s" "$RESTIC_DEFAULT_PASSWORD" >/etc/secrets.d/restic-default-encryption.key'';
+      outputs = [ "file:/etc/secrets.d/restic-default-encryption.key" ];
+    }
+  ];
+};
+```
+
+A secret without `same` always counts as changed, so the destinations that
+need it always run. The tokens are taken after storing, as a destination
+that writes what the source reads changes the token.
+
+setup-secrets keeps what it needs for this in `stateFile`
+(`/var/lib/setup-secrets/state.json`): the names, command strings and
+tokens, and the outputs it wrote. Never the values.
+
+## Cleaning up
+
+A destination that goes away, because a module was disabled say, leaves
+the outputs it wrote behind. setup-secrets records every output it writes, so it can
+find them:
+
+```
+$ sudo setup-secrets cleanup
+kube:homepage/sonarr-api-key                       written by Homepage (SONARR_API_KEY), 2026-11-19 23:57
+
+setup-secrets cleanup --delete deletes them.
+```
+
+Cleanup never runs by itself: a destination enabled again later gets a new
+value only if the source can make one, and a generated password that no
+longer matches what a service has is worse than a stale Secret.
+
+An output is `<kind>:<id>`. The kind says how to check and delete it, with
+the id as `$OUTPUT`: `exists` exits 0 when the output is there and 1 when it
+isn't. `file` is built in; anything else is yours to define:
+
+```nix
+setup-secrets.outputKinds.kube = {
+  exists = ''
+    out=$(kubectl -n "''${OUTPUT%%/*}" get secret "''${OUTPUT#*/}" --ignore-not-found -oname) || exit 2
+    [[ -n $out ]]
+  '';
+  delete = ''kubectl -n "''${OUTPUT%%/*}" delete secret "''${OUTPUT#*/}" --ignore-not-found'';
+};
+```
 
 ## Recipes
 

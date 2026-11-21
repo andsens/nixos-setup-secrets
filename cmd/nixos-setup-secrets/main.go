@@ -8,33 +8,41 @@ import (
 	"github.com/andsens/nixos-setup-secrets/internal/setupsecrets"
 )
 
-type Params struct {
-	Auto    bool     `help:"Don't show edit dialog, fetch the secrets and immediately store them"`
-	Group   []string `help:"Only run the destinations of this group, and fetch only what they need. Repeatable"`
-	Verbose bool     `help:"Turn on verbose logging"`
+type CLI struct {
+	Verbose bool `help:"Turn on verbose logging"`
+
+	Run struct {
+		Auto        bool     `help:"Don't show the TUI, fetch the secrets and store them"`
+		ChangedOnly bool     `help:"With --auto, run only the destinations whose command, secrets or outputs changed since they last stored"`
+		Group       []string `help:"Only run the destinations of this group, and fetch only what they need. Repeatable"`
+	} `cmd:"" default:"withargs" help:"Open the TUI, or with --auto fetch and store in one pass"`
+
+	Cleanup struct {
+		Delete bool `help:"Delete them"`
+	} `cmd:"" help:"List the outputs setup-secrets wrote that no destination declares any more"`
 }
 
-var params Params
-
 func main() {
-	kong.Parse(&params, kong.Name("nixos-setup-secrets"), kong.Description("A Nix cli utility for setting up secrets "))
-	slog.SetDefault(slog.Default())
-	if params.Verbose {
+	var cli CLI
+	ctx := kong.Parse(&cli, kong.Name("nixos-setup-secrets"), kong.Description("A Nix cli utility for setting up secrets"))
+	if cli.Verbose {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 	config, err := setupsecrets.GetConfig()
-	if err != nil {
-		slog.Error(err.Error())
-		os.Exit(1)
-	}
-	if err = config.SelectGroups(params.Group); err != nil {
-		slog.Error(err.Error())
-		os.Exit(1)
-	}
-	if params.Auto {
-		err = setupsecrets.SetupAuto(config)
-	} else {
-		err = setupsecrets.SetupManual(config)
+	if err == nil {
+		switch ctx.Command() {
+		case "cleanup":
+			err = setupsecrets.Cleanup(config, os.Stdout, os.Stderr, cli.Cleanup.Delete)
+		default:
+			if err = config.SelectGroups(cli.Run.Group); err != nil {
+				break
+			}
+			if cli.Run.Auto {
+				err = setupsecrets.SetupAuto(config, cli.Run.ChangedOnly)
+			} else {
+				err = setupsecrets.SetupManual(config)
+			}
+		}
 	}
 	if err != nil {
 		slog.Error(err.Error())

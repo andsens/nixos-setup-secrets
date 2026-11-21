@@ -40,6 +40,9 @@ const (
 	stateStoring  = "storing"
 	stateStored   = "stored"
 	stateWaiting  = "waiting"
+	// What the dry run marks the destinations with
+	stateWouldRun  = "would run"
+	stateUnchanged = "unchanged"
 )
 
 func stateColor(state string) tcell.Color {
@@ -48,7 +51,7 @@ func stateColor(state string) tcell.Color {
 		return colorGreen
 	case stateFailed:
 		return colorRed
-	case stateMissing, stateWaiting:
+	case stateMissing, stateWaiting, stateWouldRun:
 		return colorYellow
 	case stateSet:
 		return colorCyan
@@ -77,6 +80,9 @@ type tui struct {
 	// What the STATE columns show, by secret name and by destination index
 	srcState  map[string]string
 	destState []string
+	// The tokens of the same commands, by secret name, and why the dry run would run a destination, by index
+	tokens  map[string]string
+	reasons map[int]string
 
 	pages          *tview.Pages
 	header         *tview.TextView
@@ -115,6 +121,8 @@ func newTUI(app *tview.Application, config *Config) *tui {
 		names:     slices.Sorted(maps.Keys(config.Sources)),
 		srcState:  map[string]string{},
 		destState: make([]string, len(config.Destinations)),
+		tokens:    map[string]string{},
+		reasons:   map[int]string{},
 		header:    tview.NewTextView().SetDynamicColors(true),
 		secrets:   tview.NewTable(),
 		dests:     tview.NewTable(),
@@ -150,7 +158,7 @@ func newTUI(app *tview.Application, config *Config) *tui {
 	t.logs.SetBorder(true).SetTitle(" [::b]log[::-] ").SetBorderPadding(0, 0, 1, 1)
 	t.logs.SetChangedFunc(func() { t.queue(func() { t.logs.ScrollToEnd() }) })
 
-	body := tview.NewFlex().AddItem(t.secrets, 68, 0, true).AddItem(t.dests, 0, 1, false)
+	body := tview.NewFlex().AddItem(t.secrets, 82, 0, true).AddItem(t.dests, 0, 1, false)
 	main := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(t.header, 4, 0, false).
 		AddItem(body, 0, 1, true).
@@ -261,7 +269,7 @@ func (t *tui) render() {
 		}
 	}
 
-	header(t.secrets, "", "NAME", "KIND", "STATE", "GROUPS")
+	header(t.secrets, "", "NAME", "KIND", "STATE", "SAME", "GROUPS")
 	for r, name := range t.names {
 		src, linked := t.config.Sources[name], linkedSecrets[name]
 		dimmed := t.focusDests && !linked
@@ -277,7 +285,8 @@ func (t *tui) render() {
 		t.secrets.SetCell(r+1, 1, cell(name, nameColor, linked, dimmed))
 		t.secrets.SetCell(r+1, 2, cell(src.kind(), colorDim, linked, dimmed))
 		t.secrets.SetCell(r+1, 3, cell(state, stateColor(state), linked, dimmed))
-		t.secrets.SetCell(r+1, 4, cell(t.groupsOf(name), colorDim, linked, dimmed))
+		t.secrets.SetCell(r+1, 4, cell(t.tokens[name], colorDim, linked, dimmed).SetMaxWidth(12))
+		t.secrets.SetCell(r+1, 5, cell(t.groupsOf(name), colorDim, linked, dimmed))
 	}
 	header(t.dests, "", "DESTINATION", "GROUP", "STATE", "READY")
 	for r, dest := range t.config.Destinations {
@@ -335,8 +344,9 @@ func (t *tui) renderHeader() {
 		}
 		return fmt.Sprintf("[%s]%d %s[-]  ", color, n, label)
 	}
-	hints := [][2]string{{"tab", "Other pane"}, {"e", "Edit value"}, {"r", "Retry"}, {"enter", "Describe"}, {"l", "Log"}, {"q", "Quit"}}
-	var cols [2]strings.Builder
+	hints := [][2]string{{"tab", "Other pane"}, {"e", "Edit value"}, {"r", "Retry"}, {"enter", "Describe"}, {"n", "Dry run"},
+		{"o", "Orphans"}, {"l", "Log"}, {"q", "Quit"}}
+	var cols [3]strings.Builder
 	for i, hint := range hints {
 		fmt.Fprintf(&cols[i/3], "[#59c2ff::b]<%s>[-::-] [#8a96a3]%s[-]\n", hint[0], hint[1])
 	}
@@ -349,7 +359,10 @@ func (t *tui) renderHeader() {
 			part(count(t.destState, stateFailed), "#f07178", "failed") + part(count(t.destState, stateWaiting), "#e6c446", "waiting") +
 			part(count(t.destState, stateNotRun), "#8a96a3", "not run"),
 	}
-	hintLines := [2][]string{strings.Split(strings.TrimSpace(cols[0].String()), "\n"), strings.Split(strings.TrimSpace(cols[1].String()), "\n")}
+	var hintLines [3][]string
+	for c := range cols {
+		hintLines[c] = strings.Split(strings.TrimSpace(cols[c].String()), "\n")
+	}
 	var sb strings.Builder
 	for i := range 3 {
 		left := ""
@@ -357,7 +370,7 @@ func (t *tui) renderHeader() {
 			left = lines[i]
 		}
 		fmt.Fprintf(&sb, "%s", padTagged(left, 52))
-		for c := range 2 {
+		for c := range 3 {
 			if i < len(hintLines[c]) {
 				fmt.Fprintf(&sb, "%s", padTagged(hintLines[c][i], 24))
 			}
@@ -390,9 +403,14 @@ func (t *tui) renderStatus(linkedDests map[int]bool) {
 					missing = append(missing, fmt.Sprintf("[%s]%s[#8a96a3] (%s)", colorName(stateColor(t.srcState[name])), name, t.srcState[name]))
 				}
 			}
-			if len(missing) > 0 {
+			switch {
+			case len(missing) > 0:
 				status = dest.LogPrefix + " waits for " + strings.Join(missing, ", ")
-			} else {
+			case t.destState[i] == stateWouldRun:
+				status = dest.LogPrefix + " would run: " + tview.Escape(t.reasons[i])
+			case t.destState[i] == stateUnchanged:
+				status = dest.LogPrefix + " is unchanged since it last stored"
+			default:
 				status = dest.LogPrefix + " has all it requires; r runs it"
 			}
 		}
@@ -444,6 +462,12 @@ func (t *tui) mainKeys(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case event.Rune() == 'r':
 		t.retry()
+		return nil
+	case event.Rune() == 'n':
+		t.do(t.dryRun)
+		return nil
+	case event.Rune() == 'o':
+		t.do(t.loadOrphans)
 		return nil
 	case event.Rune() == 'l':
 		t.showLog()
@@ -658,6 +682,18 @@ func (t *tui) fetchOne(name string) {
 	default:
 		t.setSrc(name, stateFetched)
 	}
+	t.refreshTokens(name)
+}
+
+// refreshTokens runs the same commands of the secrets and shows their tokens
+func (t *tui) refreshTokens(names ...string) {
+	tokens := t.config.sameTokens(t.logs, names)
+	t.queue(func() {
+		for _, name := range names {
+			t.tokens[name] = tokens[name]
+		}
+		t.render()
+	})
 }
 
 // fetchAll fetches a few at a time, so one source waiting for a workload doesn't hold up the others
@@ -691,6 +727,10 @@ func (t *tui) storeDest(i int) {
 	switch result {
 	case storeDone:
 		t.setDest(i, stateStored)
+		if err := t.config.record(t.logs, []*Destination{dest}); err != nil {
+			fmt.Fprintf(t.logs, "Recording the state failed: %s\n", err)
+		}
+		t.refreshTokens(dest.secrets()...)
 	case storeFailed:
 		t.setDest(i, stateFailed)
 	default:
@@ -759,4 +799,103 @@ func (t *tui) retry() {
 			t.storeDest(i)
 		}
 	})
+}
+
+// dryRun marks the destinations that setup-secrets --auto --changed-only would run, and why
+func (t *tui) dryRun() {
+	state, err := readState(t.config.statePath)
+	if err != nil {
+		fmt.Fprintf(t.logs, "Reading the state failed: %s\n", err)
+		return
+	}
+	reasons := t.config.planRun(t.logs, state)
+	t.queue(func() {
+		for i, dest := range t.config.Destinations {
+			if reason, runs := reasons[dest]; runs {
+				t.destState[i], t.reasons[i] = stateWouldRun, reason
+			} else {
+				t.destState[i] = stateUnchanged
+				delete(t.reasons, i)
+			}
+		}
+		t.render()
+	})
+}
+
+// loadOrphans checks the outputs no destination declares any more and shows them
+func (t *tui) loadOrphans() {
+	orphans, err := t.config.orphans(t.logs)
+	if err != nil {
+		fmt.Fprintf(t.logs, "Reading the state failed: %s\n", err)
+		return
+	}
+	t.queue(func() { t.showOrphans(orphans) })
+}
+
+func (t *tui) showOrphans(orphans []Orphan) {
+	table := tview.NewTable().SetSelectable(true, false).SetFixed(1, 0)
+	table.SetSelectedStyle(tcell.StyleDefault.Background(colorSelBg).Foreground(tcell.ColorWhite))
+	table.SetBorder(true).SetBorderColor(colorAccent).SetBorderPadding(0, 0, 1, 1).
+		SetTitle(fmt.Sprintf(" [::b]orphans[::-][#8a96a3](outputs no destination declares)[-][#ffb454][%d][-] ", len(orphans)))
+	header(table, "OUTPUT", "WRITTEN BY", "WRITTEN", "STATE")
+	for r, orphan := range orphans {
+		state, color := "present", colorFg
+		switch {
+		case orphan.Err != nil:
+			state, color = "can't check: "+orphan.Err.Error(), colorRed
+		case !orphan.Exists:
+			state, color = "already gone", colorDim
+		}
+		table.SetCell(r+1, 0, cell(orphan.Output, colorFg, false, false))
+		table.SetCell(r+1, 1, cell(orphan.WrittenBy, colorDim, false, false))
+		table.SetCell(r+1, 2, cell(orphan.At.Local().Format("2006-01-02 15:04"), colorDim, false, false))
+		table.SetCell(r+1, 3, cell(state, color, false, false))
+	}
+	if len(orphans) == 0 {
+		table.SetCell(1, 0, cell("Every output setup-secrets wrote is still declared.", colorDim, false, false).SetSelectable(false))
+	}
+	table.Select(1, 0)
+	hint := tview.NewTextView().SetDynamicColors(true).
+		SetText(" [#8a96a3]d deletes the selected output, esc goes back[-]")
+	page := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(table, 0, 1, true).AddItem(hint, 1, 0, false)
+	table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch {
+		case event.Key() == tcell.KeyEscape || event.Rune() == 'q':
+			t.closePage("orphans")
+			return nil
+		case event.Rune() == 'd':
+			row, _ := table.GetSelection()
+			if row >= 1 && row <= len(orphans) && orphans[row-1].Exists {
+				t.confirmDelete(orphans[row-1].Output)
+			}
+			return nil
+		}
+		return event
+	})
+	t.pages.RemovePage("orphans")
+	t.page("orphans", page, false)
+	t.app.SetFocus(table)
+}
+
+func (t *tui) confirmDelete(output string) {
+	modal := tview.NewModal().
+		SetText("Delete " + output + "?\n\nThere is no undo. A destination declaring it again later gets a new value only if its source can make one.").
+		AddButtons([]string{"Cancel", "Delete"})
+	modal.SetBackgroundColor(colorBorder).SetBorderColor(colorRed).SetTitle(" [::b]delete[::-] ")
+	modal.SetDoneFunc(func(_ int, label string) {
+		t.pages.RemovePage("delete")
+		if label != "Delete" {
+			return
+		}
+		t.do(func() {
+			if err := t.config.removeOrphan(t.logs, output); err != nil {
+				fmt.Fprintf(t.logs, "%s: Deleting failed: %s\n", output, err)
+			} else {
+				fmt.Fprintf(t.logs, "%s: Deleted\n", output)
+			}
+			t.loadOrphans()
+		})
+	})
+	t.page("delete", modal, true)
+	t.app.SetFocus(modal)
 }

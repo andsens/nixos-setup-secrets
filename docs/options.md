@@ -166,6 +166,33 @@ string
 
 
 
+## setup-secrets\.destinations\.\*\.outputs
+
+
+
+What the command writes, as ` <kind>:<id> ` with a kind from ` outputKinds `: ` file:/etc/secrets.d/key `,
+` kube:homepage/sonarr-api-key `\. setup-secrets records the outputs it writes; ` setup-secrets cleanup `
+lists those no destination declares any more and ` --delete ` deletes them\. With ` --changed-only ` a
+destination whose output is gone runs again\.
+
+
+
+*Type:*
+list of string matching the pattern \[^:]+:\.+
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
 ## setup-secrets\.destinations\.\*\.requires
 
 
@@ -315,6 +342,63 @@ name == "host"
 
 
 
+## setup-secrets\.outputKinds
+
+
+
+How to check and delete each kind of output, given its id as ` $OUTPUT `\. ` exists ` exits 0 when the output is
+there and 1 when it isn’t; anything else is an error\. ` file ` is built in\.
+
+
+
+*Type:*
+attribute set of (submodule)
+
+
+
+*Default:*
+
+```nix
+{ }
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
+## setup-secrets\.outputKinds\.\<name>\.delete
+
+
+
+Command that deletes ` $OUTPUT `\.
+
+
+
+*Type:*
+string
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
+## setup-secrets\.outputKinds\.\<name>\.exists
+
+
+
+Command that checks whether ` $OUTPUT ` exists\.
+
+
+
+*Type:*
+string
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
 ## setup-secrets\.script
 
 
@@ -451,6 +535,34 @@ unsigned integer, meaning >=0
 
 
 
+## setup-secrets\.sources\.\<name>\.same
+
+
+
+Command that prints a cheap token that changes whenever the value does, without fetching the value: a
+file’s mtime, a Kubernetes Secret’s resourceVersion\. With ` --changed-only `, which the units pass, a
+destination runs only when the command or token of one of its secrets, or its own command, changed
+since it last stored, or when one of its ` outputs ` is gone\. A source without it always counts as
+changed\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
 ## setup-secrets\.sources\.\<name>\.storedIn
 
 
@@ -496,6 +608,30 @@ string
 
 ```nix
 "30s"
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
+## setup-secrets\.stateFile
+
+
+
+Where setup-secrets keeps what it wrote: names, command strings and tokens, never values\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"/var/lib/setup-secrets/state.json"
 ```
 
 *Declared by:*

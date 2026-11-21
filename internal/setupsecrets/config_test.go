@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +21,14 @@ func testConfig(t *testing.T, raw string) *Config {
 	return config
 }
 
+// auto runs setupAuto into a buffer
+func auto(t *testing.T, config *Config, changedOnly bool) (string, error) {
+	t.Helper()
+	var log bytes.Buffer
+	err := setupAuto(config, &syncWriter{w: &log}, changedOnly)
+	return log.String(), err
+}
+
 func TestSelectGroups(t *testing.T) {
 	config := testConfig(t, `{
 		"sources": {"A": {"cmd": "echo a"}, "B": {"cmd": "echo b"}},
@@ -32,20 +42,25 @@ func TestSelectGroups(t *testing.T) {
 	if len(config.Destinations) != 1 || config.Destinations[0].LogPrefix != "cluster dest" {
 		t.Fatalf("kept %v", config.Destinations)
 	}
-	var log bytes.Buffer
-	config.fetch(&log)
-	if _, ok := config.Sources["A"]; ok {
-		t.Errorf("A is only needed by the host group, yet was kept:\n%s", log.String())
+	if len(config.all) != 2 {
+		t.Errorf("all: %v", config.all)
+	}
+	log, err := auto(t, config, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Sources["A"].Value != nil || !strings.Contains(log, "A: Not needed by any destination that runs, omitting") {
+		t.Errorf("A is only needed by the host group, yet was fetched:\n%s", log)
 	}
 	if v := config.Sources["B"].Value; v == nil || *v != "b" {
-		t.Errorf("B: %v\n%s", v, log.String())
+		t.Errorf("B: %v\n%s", v, log)
 	}
 	if err := config.SelectGroups([]string{"nope"}); err == nil || !strings.Contains(err.Error(), "known groups: cluster") {
 		t.Errorf("unknown group: %v", err)
 	}
 }
 
-func TestParseConfigAttempts(t *testing.T) {
+func TestParseConfig(t *testing.T) {
 	config := testConfig(t, `{"sources": {"A": {"cmd": "x", "timeout": "2m", "retries": 3}, "B": {"cmd": "x"}}, "destinations": []}`)
 	if a := config.Sources["A"].Attempts; a.timeout != 2*time.Minute || a.Retries != 3 {
 		t.Errorf("A: %+v", a)
@@ -55,6 +70,9 @@ func TestParseConfigAttempts(t *testing.T) {
 	}
 	if _, err := parseConfig([]byte(`{"sources": {"A": {"timeout": "soon"}}}`)); err == nil {
 		t.Error("a bad timeout parsed")
+	}
+	if _, err := parseConfig([]byte(`{"destinations": [{"logPrefix": "D", "outputs": ["nokind"]}]}`)); err == nil {
+		t.Error("an output without a kind parsed")
 	}
 }
 
@@ -126,11 +144,9 @@ func TestStoreEnv(t *testing.T) {
 	config := testConfig(t, `{
 		"sources": {"A": {"cmd": "echo a"}, "W": {}},
 		"destinations": [{"logPrefix": "D", "requires": ["A"], "wants": ["W"], "cmd": "echo \"$A-${W:-none}\" >&2"}]}`)
-	var log bytes.Buffer
-	config.fetch(&log)
-	config.store(&log)
-	if !strings.Contains(log.String(), "D: a-none\n") {
-		t.Errorf("log:\n%s", log.String())
+	log, err := auto(t, config, false)
+	if err != nil || !strings.Contains(log, "D: a-none\n") {
+		t.Errorf("err %v, log:\n%s", err, log)
 	}
 }
 
@@ -144,13 +160,9 @@ func TestFailures(t *testing.T) {
 			{"logPrefix": "needs manual", "requires": ["MANUAL"], "cmd": "true"},
 			{"logPrefix": "breaks", "requires": ["OK"], "cmd": "exit 2"}
 		]}`)
-	var log bytes.Buffer
-	if got := config.fetch(&log); len(got) != 1 || got[0] != "BAD" {
-		t.Errorf("fetch failures %v", got)
-	}
-	got := config.store(&log)
-	if strings.Join(got, ",") != "needs bad,breaks" {
-		t.Errorf("store failures %v\n%s", got, log.String())
+	log, err := auto(t, config, false)
+	if err == nil || err.Error() != "Failed fetching BAD; storing breaks, needs bad" {
+		t.Errorf("err %v\n%s", err, log)
 	}
 }
 
@@ -173,7 +185,7 @@ func TestFetchAndStoreOrder(t *testing.T) {
 			{"logPrefix": "after a failure", "requires": ["BROKEN"], "cmd": "true"}
 		]}`)
 	var log bytes.Buffer
-	fetchFailed, storeFailed := config.fetchAndStore(&syncWriter{w: &log}, 2)
+	fetchFailed, storeFailed, stored := config.fetchAndStore(&syncWriter{w: &log}, config.Destinations, 2)
 	if strings.Join(fetchFailed, ",") != "BROKEN" {
 		t.Errorf("fetch failures %v\n%s", fetchFailed, log.String())
 	}
@@ -181,8 +193,116 @@ func TestFetchAndStoreOrder(t *testing.T) {
 	if strings.Join(storeFailed, ",") != "after a failure" {
 		t.Errorf("store failures %v\n%s", storeFailed, log.String())
 	}
-	if !strings.Contains(log.String(), "uses the waiting one: Storing") {
-		t.Errorf("the waiting source held up the destination it waits for:\n%s", log.String())
+	if len(stored) != 2 || !strings.Contains(log.String(), "uses the waiting one: Storing") {
+		t.Errorf("stored %v; the waiting source held up the destination it waits for:\n%s", stored, log.String())
+	}
+}
+
+// stateConfig is a source whose value and token live in a file, read back by its destination, and an output of the
+// built-in file kind
+func stateConfig(t *testing.T, dir string, extra string) *Config {
+	t.Helper()
+	config := testConfig(t, `{
+		"sources": {
+			"STORED": {"cmd": "cat `+dir+`/value 2>/dev/null || echo first", "same": "stat -c %Y.%s `+dir+`/value 2>/dev/null || echo none"},
+			"PLAIN": {"cmd": "echo plain"}
+			`+extra+`
+		},
+		"destinations": [
+			{"logPrefix": "stored", "requires": ["STORED"], "cmd": "printf %s \"$STORED\" >`+dir+`/value", "outputs": ["file:`+dir+`/value"]},
+			{"logPrefix": "plain", "requires": ["PLAIN"], "cmd": "true"}
+		],
+		"outputKinds": {"file": {"exists": "test -e \"$OUTPUT\"", "delete": "rm -f -- \"$OUTPUT\""}}
+	}`)
+	config.statePath = filepath.Join(dir, "state", "state.json")
+	return config
+}
+
+func TestChangedOnly(t *testing.T) {
+	noSleep(t)
+	dir := t.TempDir()
+	log, err := auto(t, stateConfig(t, dir, ""), true)
+	if err != nil || !strings.Contains(log, "stored: Runs, never stored") {
+		t.Fatalf("first run: err %v\n%s", err, log)
+	}
+	state, err := readState(filepath.Join(dir, "state", "state.json"))
+	if err != nil || state.Outputs["file:"+dir+"/value"].WrittenBy != "stored" {
+		t.Fatalf("state: %v %+v", err, state)
+	}
+
+	// Nothing changed: the destination with a same command is skipped, the one without still runs
+	log, err = auto(t, stateConfig(t, dir, ""), true)
+	if err != nil || !strings.Contains(log, "stored: Unchanged") || strings.Contains(log, "STORED: Fetching") ||
+		!strings.Contains(log, "plain: Runs, PLAIN has no same command") {
+		t.Errorf("second run: err %v\n%s", err, log)
+	}
+
+	// The output is gone: the destination runs again
+	os.Remove(filepath.Join(dir, "value"))
+	log, _ = auto(t, stateConfig(t, dir, ""), true)
+	if !strings.Contains(log, "stored: Runs, STORED changed") && !strings.Contains(log, "is gone") {
+		t.Errorf("after the output went: %s", log)
+	}
+
+	// The token changed behind its back: it runs again
+	time.Sleep(1100 * time.Millisecond)
+	os.WriteFile(filepath.Join(dir, "value"), []byte("edited"), 0o600)
+	log, _ = auto(t, stateConfig(t, dir, ""), true)
+	if !strings.Contains(log, "stored: Runs, STORED changed") {
+		t.Errorf("after a change: %s", log)
+	}
+
+	// Without --changed-only everything runs
+	log, _ = auto(t, stateConfig(t, dir, ""), false)
+	if !strings.Contains(log, "stored: Storing") {
+		t.Errorf("without --changed-only: %s", log)
+	}
+}
+
+func TestCleanup(t *testing.T) {
+	noSleep(t)
+	dir := t.TempDir()
+	if _, err := auto(t, stateConfig(t, dir, ""), false); err != nil {
+		t.Fatal(err)
+	}
+	// The destination is gone from the configuration, its output isn't
+	config := stateConfig(t, dir, "")
+	config.all = config.all[1:]
+	var out, log bytes.Buffer
+	if err := Cleanup(config, &out, &log, false); err != nil || !strings.Contains(out.String(), "file:"+dir+"/value") ||
+		!strings.Contains(out.String(), "written by stored") {
+		t.Fatalf("listing: %v\n%s", err, out.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "value")); err != nil {
+		t.Fatal("listing deleted the output")
+	}
+	out.Reset()
+	if err := Cleanup(config, &out, &log, true); err != nil || !strings.Contains(out.String(), ": deleted") {
+		t.Fatalf("deleting: %v\n%s", err, out.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "value")); err == nil {
+		t.Error("the output is still there")
+	}
+	out.Reset()
+	if err := Cleanup(config, &out, &log, false); err != nil || !strings.Contains(out.String(), "still declared") {
+		t.Errorf("after deleting: %v\n%s", err, out.String())
+	}
+}
+
+func TestOutputExists(t *testing.T) {
+	config := testConfig(t, `{"outputKinds": {"odd": {"exists": "exit 2"}, "file": {"exists": "test -e \"$OUTPUT\""}}}`)
+	var log bytes.Buffer
+	if ok, err := config.outputExists(&log, "file:/"); !ok || err != nil {
+		t.Errorf("file:/ %v %v", ok, err)
+	}
+	if ok, err := config.outputExists(&log, "file:/nonexistent"); ok || err != nil {
+		t.Errorf("file:/nonexistent %v %v", ok, err)
+	}
+	if _, err := config.outputExists(&log, "odd:x"); err == nil {
+		t.Error("exit 2 isn't an answer")
+	}
+	if _, err := config.outputExists(&log, "unknown:x"); err == nil {
+		t.Error("an unknown kind")
 	}
 }
 

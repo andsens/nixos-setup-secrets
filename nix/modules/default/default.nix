@@ -11,10 +11,12 @@ let
   nixos-setup-secrets-wrapper = pkgs.writeShellScriptBin "setup-secrets" ''
     PATH=${pkgs.lib.makeBinPath [ pkgs.bash ]}
     umask 077
+    export NIXOS_SETUP_SECRETS_STATE=${lib.escapeShellArg cfg.stateFile}
     export NIXOS_SETUP_SECRETS_CONFIG=$(${lib.getExe' pkgs.coreutils "cat"} <<'EOF'
     ${builtins.toJSON {
       sources = lib.filterAttrs (name: { enable, ... }: enable) cfg.sources;
-      destinations = lib.filter ({ enable, ... }: enable) cfg.destinations;
+      destinations = enabledDestinations;
+      inherit (cfg) outputKinds;
     }}
     EOF
     )
@@ -106,6 +108,17 @@ in
                 '';
                 default = null;
               };
+              same = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                description = ''
+                  Command that prints a cheap token that changes whenever the value does, without fetching the value: a
+                  file's mtime, a Kubernetes Secret's resourceVersion. With `--changed-only`, which the units pass, a
+                  destination runs only when the command or token of one of its secrets, or its own command, changed
+                  since it last stored, or when one of its `outputs` is gone. A source without it always counts as
+                  changed.
+                '';
+                default = null;
+              };
             }
             // attemptsOptions "retrieve the secret";
           }
@@ -137,6 +150,16 @@ in
               description = "List of secrets this command wants (but not requires)";
               default = [ ];
             };
+            outputs = lib.mkOption {
+              description = ''
+                What the command writes, as `<kind>:<id>` with a kind from `outputKinds`: `file:/etc/secrets.d/key`,
+                `kube:homepage/sonarr-api-key`. setup-secrets records the outputs it writes; `setup-secrets cleanup`
+                lists those no destination declares any more and `--delete` deletes them. With `--changed-only` a
+                destination whose output is gone runs again.
+              '';
+              type = lib.types.listOf (lib.types.strMatching "[^:]+:.+");
+              default = [ ];
+            };
             group = lib.mkOption {
               description = "The group the destination is in, which decides the unit that runs it (see `groups`).";
               type = lib.types.str;
@@ -151,6 +174,32 @@ in
         }
       );
     };
+    outputKinds = lib.mkOption {
+      description = ''
+        How to check and delete each kind of output, given its id as `$OUTPUT`. `exists` exits 0 when the output is
+        there and 1 when it isn't; anything else is an error. `file` is built in.
+      '';
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            exists = lib.mkOption {
+              description = "Command that checks whether `$OUTPUT` exists.";
+              type = lib.types.str;
+            };
+            delete = lib.mkOption {
+              description = "Command that deletes `$OUTPUT`.";
+              type = lib.types.str;
+            };
+          };
+        }
+      );
+      default = { };
+    };
+    stateFile = lib.mkOption {
+      description = "Where setup-secrets keeps what it wrote: names, command strings and tokens, never values.";
+      type = lib.types.str;
+      default = "/var/lib/setup-secrets/state.json";
+    };
     script = lib.mkOption {
       description = "The generated setup-secrets script";
       type = lib.types.package;
@@ -161,8 +210,23 @@ in
   };
   imports = [ (inputs.flake-parts.lib.importApply ./users.nix { inherit self inputs; }) ];
   config = lib.mkIf cfg.enable {
+    setup-secrets.outputKinds.file = {
+      exists = lib.mkDefault ''test -e "$OUTPUT"'';
+      delete = lib.mkDefault ''${lib.getExe' pkgs.coreutils "rm"} -f -- "$OUTPUT"'';
+    };
+    # For the TUI and manual runs as much as for the units, which have StateDirectory
+    systemd.tmpfiles.rules = [ "d ${dirOf cfg.stateFile} 0700 root root -" ];
     assertions =
-      lib.flatten (
+      map (output: {
+        assertion = cfg.outputKinds ? ${lib.head (lib.splitString ":" output)};
+        message = "setup-secrets: the output ${output} has a kind that setup-secrets.outputKinds doesn't define";
+      }) (lib.unique (lib.concatMap ({ outputs, ... }: outputs) enabledDestinations))
+      ++ lib.mapAttrsToList (logPrefix: dests: {
+        # The state keeps the destinations by it
+        assertion = lib.length dests == 1;
+        message = "setup-secrets: ${toString (lib.length dests)} destinations have the logPrefix \"${logPrefix}\"; it has to be unique";
+      }) (lib.groupBy ({ logPrefix, ... }: logPrefix) enabledDestinations)
+      ++ lib.flatten (
         map (
           dest:
           map (src: {
@@ -203,7 +267,9 @@ in
             # Remains active: an onActivation group isn't pulled in again by a boot transaction queued while
             # sysinit.target is still pending, the others stay up with what pulled them in
             RemainAfterExit = true;
-            ExecStart = "${lib.getExe cfg.script} --auto --group %i";
+            ExecStart = "${lib.getExe cfg.script} --auto --changed-only --group %i";
+            StateDirectory = "setup-secrets";
+            StateDirectoryMode = "0700";
           };
         };
       }

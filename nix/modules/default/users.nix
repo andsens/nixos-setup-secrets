@@ -26,6 +26,7 @@ in
       destinations = lib.mapAttrsToList (user: spec: {
         logPrefix = "Password for ${user}";
         requires = [ "USER_PW_${user}" ];
+        outputs = [ "file:${spec.hashedPasswordFile}" ];
         cmd = lib.getExe (
           pkgs.writeShellScriptBin "set-pwhash.sh" ''
             umask 077

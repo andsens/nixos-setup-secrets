@@ -53,7 +53,7 @@ project keeps it.
   - `e` edits a secret; destinations aren't edited;
   - only round-trip and manual sources are editable. A round-trip source reads back an output that one of its own
     destinations writes, named by a new source field `storedIn`, so an edit sticks. A manual source has no `cmd`. An
-    upstream source reads from somewhere setup-secrets never writes; it is read-only, as an edit would be fetched
+    extracted source reads from somewhere setup-secrets never writes; it is read-only, as an edit would be fetched
     over on the next run;
   - edits are live: saving fetches the other values its destinations need again and runs those destinations. A
     destination that needs two edited values holds a mismatched pair between the two saves; there is no staging.

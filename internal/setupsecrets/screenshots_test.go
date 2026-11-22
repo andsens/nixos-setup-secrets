@@ -77,6 +77,12 @@ func TestScreenshots(t *testing.T) {
 		ui.render()
 		return ui.pages
 	})
+	shot("describe", func(ui *tui) tview.Primitive {
+		ui.secrets.Select(1+slices.Index(ui.names, "SONARR_API_KEY"), 0)
+		ui.render()
+		ui.describe()
+		return ui.pages
+	})
 	shot("edit", func(ui *tui) tview.Primitive {
 		ui.secrets.Select(1+slices.Index(ui.names, "INWX_PASSWORD"), 0)
 		ui.render()

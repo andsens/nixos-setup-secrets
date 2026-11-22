@@ -40,6 +40,10 @@ const (
 	stateStoring  = "storing"
 	stateStored   = "stored"
 	stateWaiting  = "waiting"
+	// A secret without a command nobody typed in: its value only exists where its destination wrote it
+	stateWriteOnly = "write-only"
+	// A destination whose only gaps are such secrets
+	stateUntouched = "untouched"
 	// What the dry run marks the destinations with
 	stateWouldRun  = "would run"
 	stateUnchanged = "unchanged"
@@ -67,10 +71,10 @@ func (src *Source) kind() string {
 	case src.StoredIn != "":
 		return "stored"
 	}
-	return "upstream"
+	return "extracted"
 }
 
-func (src *Source) editable() bool { return src.kind() != "upstream" }
+func (src *Source) editable() bool { return src.kind() != "extracted" }
 
 type tui struct {
 	host   string
@@ -140,7 +144,7 @@ func newTUI(app *tview.Application, config *Config) *tui {
 	t.do = func(job func()) { jobs <- job }
 
 	for _, name := range t.names {
-		t.srcState[name] = stateMissing
+		t.srcState[name] = stateWriteOnly
 		if config.Sources[name].Cmd != "" {
 			t.srcState[name] = stateFetching
 		}
@@ -154,11 +158,29 @@ func newTUI(app *tview.Application, config *Config) *tui {
 		table.SetSelectedStyle(tcell.StyleDefault.Background(colorSelBg).Foreground(tcell.ColorWhite))
 		table.SetBorder(true).SetBorderPadding(0, 0, 1, 1)
 		table.SetSelectionChangedFunc(func(int, int) { t.render() })
+		// A click into the inactive pane makes it the active one, then selects the row clicked
+		dests := table == t.dests
+		// and a double click on a row describes it
+		table.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
+			switch action {
+			case tview.MouseLeftDown:
+				if t.focusDests != dests {
+					t.focusPane(dests)
+				}
+			case tview.MouseLeftDoubleClick:
+				if row, _ := table.CellAt(event.Position()); row >= 1 && row < table.GetRowCount() {
+					table.Select(row, 0)
+					t.describe()
+					return tview.MouseConsumed, nil
+				}
+			}
+			return action, event
+		})
 	}
 	t.logs.SetBorder(true).SetTitle(" [::b]log[::-] ").SetBorderPadding(0, 0, 1, 1)
 	t.logs.SetChangedFunc(func() { t.queue(func() { t.logs.ScrollToEnd() }) })
 
-	body := tview.NewFlex().AddItem(t.secrets, 82, 0, true).AddItem(t.dests, 0, 1, false)
+	body := tview.NewFlex().AddItem(t.secrets, 86, 0, true).AddItem(t.dests, 0, 1, false)
 	main := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(t.header, 4, 0, false).
 		AddItem(body, 0, 1, true).
@@ -298,7 +320,7 @@ func (t *tui) render() {
 		}
 		have, need := t.ready(dest)
 		readyColor := colorDim
-		if have < need {
+		if len(t.fetchableGaps(dest)) > 0 {
 			readyColor = colorYellow
 		}
 		state := t.destState[r]
@@ -344,8 +366,13 @@ func (t *tui) renderHeader() {
 		}
 		return fmt.Sprintf("[%s]%d %s[-]  ", color, n, label)
 	}
-	hints := [][2]string{{"tab", "Other pane"}, {"e", "Edit value"}, {"r", "Retry"}, {"enter", "Describe"}, {"n", "Dry run"},
+	// What the keys do in the focused pane: secrets are edited, destinations only run
+	hints := [][2]string{{"tab", "Destinations"}, {"e", "Edit value"}, {"r", "Retry"}, {"enter", "Describe"}, {"n", "Dry run"},
 		{"o", "Orphans"}, {"l", "Log"}, {"q", "Quit"}}
+	if t.focusDests {
+		hints = [][2]string{{"tab", "Secrets"}, {"r", "Run"}, {"enter", "Describe"}, {"n", "Dry run"}, {"o", "Orphans"},
+			{"l", "Log"}, {"q", "Quit"}}
+	}
 	var cols [3]strings.Builder
 	for i, hint := range hints {
 		fmt.Fprintf(&cols[i/3], "[#59c2ff::b]<%s>[-::-] [#8a96a3]%s[-]\n", hint[0], hint[1])
@@ -353,7 +380,7 @@ func (t *tui) renderHeader() {
 	lines := []string{
 		fmt.Sprintf("[#ffb454]Host:[-]          %s", t.host),
 		"[#ffb454]Secrets:[-]       " + part(count(srcStates, stateFetched)+count(srcStates, stateSet)+count(srcStates, stateEdited), "#91d076", "with value") +
-			part(count(srcStates, stateFailed), "#f07178", "failed") + part(count(srcStates, stateMissing), "#e6c446", "missing") +
+			part(count(srcStates, stateFailed), "#f07178", "failed") + part(count(srcStates, stateMissing), "#e6c446", "missing") + part(count(srcStates, stateWriteOnly), "#8a96a3", "write-only") +
 			part(count(srcStates, stateFetching), "#8a96a3", "fetching"),
 		"[#ffb454]Destinations:[-]  " + part(count(t.destState, stateStored), "#91d076", "stored") +
 			part(count(t.destState, stateFailed), "#f07178", "failed") + part(count(t.destState, stateWaiting), "#e6c446", "waiting") +
@@ -397,15 +424,21 @@ func (t *tui) renderStatus(linkedDests map[int]bool) {
 		if i := t.selectedDest(); i >= 0 {
 			dest := t.config.Destinations[i]
 			crumb = dest.LogPrefix
-			var missing []string
+			var missing, writeOnly []string
 			for _, name := range dest.Requires {
-				if !t.hasValue(name) {
+				switch {
+				case t.hasValue(name):
+				case t.config.Sources[name] != nil && t.config.Sources[name].Cmd == "":
+					writeOnly = append(writeOnly, name)
+				default:
 					missing = append(missing, fmt.Sprintf("[%s]%s[#8a96a3] (%s)", colorName(stateColor(t.srcState[name])), name, t.srcState[name]))
 				}
 			}
 			switch {
 			case len(missing) > 0:
 				status = dest.LogPrefix + " waits for " + strings.Join(missing, ", ")
+			case len(writeOnly) > 0:
+				status = dest.LogPrefix + " keeps what it has: nobody typed in " + strings.Join(writeOnly, ", ") + "; edit it in the secrets pane to set one"
 			case t.destState[i] == stateWouldRun:
 				status = dest.LogPrefix + " would run: " + tview.Escape(t.reasons[i])
 			case t.destState[i] == stateUnchanged:
@@ -422,7 +455,7 @@ func (t *tui) renderStatus(linkedDests map[int]bool) {
 			dests = "its destination"
 		}
 		switch src.kind() {
-		case "upstream":
+		case "extracted":
 			status = fmt.Sprintf("%s comes from a command setup-secrets doesn't write to, so it's read-only; r fetches it again and runs %s", name, dests)
 		case "stored":
 			status = fmt.Sprintf("Saving %s runs %s; the value is read back from %s", name, dests, tview.Escape(src.StoredIn))
@@ -446,13 +479,7 @@ func colorName(c tcell.Color) string {
 func (t *tui) mainKeys(event *tcell.EventKey) *tcell.EventKey {
 	switch {
 	case event.Key() == tcell.KeyTab || event.Key() == tcell.KeyBacktab:
-		t.focusDests = !t.focusDests
-		if t.focusDests {
-			t.app.SetFocus(t.dests)
-		} else {
-			t.app.SetFocus(t.secrets)
-		}
-		t.render()
+		t.focusPane(!t.focusDests)
 		return nil
 	case event.Key() == tcell.KeyEnter:
 		t.describe()
@@ -477,6 +504,17 @@ func (t *tui) mainKeys(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	return event
+}
+
+// focusPane makes the destinations pane the active one, or the secrets pane
+func (t *tui) focusPane(dests bool) {
+	t.focusDests = dests
+	if dests {
+		t.app.SetFocus(t.dests)
+	} else {
+		t.app.SetFocus(t.secrets)
+	}
+	t.render()
 }
 
 // page shows p over the main view; esc closes it
@@ -545,7 +583,10 @@ func (t *tui) describe() {
 		value := "[#8a96a3]none[-]"
 		t.mu.RLock()
 		if t.hasValue(name) {
-			value = fmt.Sprintf("[#8a96a3]%d characters (e shows it)[-]", len(*src.Value))
+			value = fmt.Sprintf("[#8a96a3]%d characters[-]", len(*src.Value))
+			if src.editable() {
+				value = fmt.Sprintf("[#8a96a3]%d characters (e shows it)[-]", len(*src.Value))
+			}
 		}
 		t.mu.RUnlock()
 		fmt.Fprintf(&sb, "%s         %s\n%s  %s\n%s         %s\n%s        %s\n%s        %s\n", k("name:"), name, k("description:"), tview.Escape(src.Description),
@@ -563,10 +604,41 @@ func (t *tui) describe() {
 				colorName(stateColor(t.destState[i])), t.destState[i])
 		}
 	}
-	view.SetText(sb.String())
+	text := strings.TrimRight(sb.String(), "\n")
+	view.SetText(text)
+	view.SetBorderColor(colorAccent)
 	view.SetInputCapture(escCloses(t, "describe"))
-	t.page("describe", view, false)
+	// A modal sized to what it says, as wide as its longest line with room for the border and padding
+	width := 60
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		width = max(width, tview.TaggedStringWidth(line)+4)
+	}
+	t.page("describe", &modalLayer{centered(view, min(width, 150), len(lines)+2)}, true)
 	t.app.SetFocus(view)
+}
+
+// modalLayer shows a modal over what is already on the screen: it dims all of that, and takes every mouse event its
+// modal doesn't, so nothing behind it reacts. The keyboard goes to the modal anyway, as it has the focus
+type modalLayer struct{ tview.Primitive }
+
+func (m *modalLayer) Draw(screen tcell.Screen) {
+	width, height := screen.Size()
+	for y := range height {
+		for x := range width {
+			mainc, combc, style, _ := screen.GetContent(x, y)
+			screen.SetContent(x, y, mainc, combc, style.Foreground(colorMuted).Background(colorBg).Bold(false))
+		}
+	}
+	m.Primitive.Draw(screen)
+}
+
+func (m *modalLayer) MouseHandler() func(action tview.MouseAction, event *tcell.EventMouse, setFocus func(p tview.Primitive)) (bool, tview.Primitive) {
+	inner := m.Primitive.MouseHandler()
+	return func(action tview.MouseAction, event *tcell.EventMouse, setFocus func(p tview.Primitive)) (bool, tview.Primitive) {
+		_, capture := inner(action, event, setFocus)
+		return true, capture
+	}
 }
 
 // centered puts p in the middle of the screen at the given size
@@ -598,7 +670,7 @@ func (t *tui) edit() {
 	if src.kind() == "manual" {
 		height = 11
 	}
-	t.page("edit", centered(form, 72, height), true)
+	t.page("edit", &modalLayer{centered(form, 72, height)}, true)
 	t.app.SetFocus(form)
 }
 
@@ -662,7 +734,7 @@ func (t *tui) fetchOne(name string) {
 		has := t.hasValue(name)
 		t.mu.RUnlock()
 		if !has {
-			t.setSrc(name, stateMissing)
+			t.setSrc(name, stateWriteOnly)
 		}
 		return
 	}
@@ -734,8 +806,26 @@ func (t *tui) storeDest(i int) {
 	case storeFailed:
 		t.setDest(i, stateFailed)
 	default:
-		t.setDest(i, stateWaiting)
+		t.mu.RLock()
+		gaps := t.fetchableGaps(dest)
+		t.mu.RUnlock()
+		if len(gaps) == 0 {
+			t.setDest(i, stateUntouched)
+		} else {
+			t.setDest(i, stateWaiting)
+		}
 	}
+}
+
+// fetchableGaps lists the secrets the destination requires that have a command but no value
+func (t *tui) fetchableGaps(dest *Destination) []string {
+	var gaps []string
+	for _, name := range dest.Requires {
+		if src := t.config.Sources[name]; src != nil && src.Cmd != "" && !t.hasValue(name) {
+			gaps = append(gaps, name)
+		}
+	}
+	return gaps
 }
 
 // fetchAgain fetches the secrets with a command that the destinations need, but the one just saved
@@ -896,6 +986,6 @@ func (t *tui) confirmDelete(output string) {
 			t.loadOrphans()
 		})
 	})
-	t.page("delete", modal, true)
+	t.page("delete", &modalLayer{modal}, true)
 	t.app.SetFocus(modal)
 }

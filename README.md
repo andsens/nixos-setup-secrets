@@ -91,17 +91,25 @@ need it, fetching the other values they need again first. There is no
 separate save step. A secret can be edited when it has no `cmd`, or when
 the source names the place it reads the value back from with `storedIn`, so
 the edit sticks. A source that reads from somewhere setup-secrets never
-writes (an API key kept in the configuration of a service) is shown
-read-only: an edit would be fetched over on the next run.
+writes (an API key extracted from the configuration of a service, KIND
+`extracted`) is shown read-only: an edit would be fetched over on the next
+run.
 
 ![Editing INWX_PASSWORD, which is read back from a Kubernetes Secret](docs/screenshots/edit.png)
 
+A secret without a `cmd` shows as `write-only`: its value only exists where
+its destination wrote it, so the TUI can't show it, only set a new one. A
+destination that only lacks such secrets is `untouched`: it keeps what it
+stored before.
+
+![Describing SONARR_API_KEY, an extracted secret, and the destinations that need it](docs/screenshots/describe.png)
+
 | Key     | What it does                                                        |
 |---------|---------------------------------------------------------------------|
-| `tab`   | Switch between the secrets and the destinations                     |
+| `tab`   | Switch between the secrets and the destinations (or click the other pane) |
 | `e`     | Edit the selected secret, and store it                              |
 | `r`     | Fetch the selected secret again and run the destinations that need it, or run the selected destination |
-| `enter` | Describe the selection: commands, `storedIn`, what it is linked to  |
+| `enter` | Describe the selection in a modal: commands, `storedIn`, what it is linked to (or double-click it) |
 | `n`     | Dry run: mark each destination as one `--changed-only` would run or skip, with the reason |
 | `o`     | The orphans: outputs no destination declares any more; `d` deletes one |
 | `l`     | The log of everything fetched and stored                            |

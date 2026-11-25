@@ -14,5 +14,5 @@ buildGo126Module {
     ];
   };
   proxyVendor = true;
-  vendorHash = "sha256-aSArZqy0Sgav/mdCAPs+8fb5XRGsPFG/2ciwJUPYetw=";
+  vendorHash = "sha256-HQckOp36RIbbmcGOQiosRdEU/BSxwq93yII9/2lB9bQ=";
 }

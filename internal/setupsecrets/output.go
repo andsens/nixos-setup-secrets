@@ -1,10 +1,8 @@
 package setupsecrets
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
 )
 
@@ -30,11 +28,10 @@ func (config *Config) outputExists(log io.Writer, output string) (bool, error) {
 		return false, err
 	}
 	_, err = run(log, output, script, env, Attempts{timeout: defaultTimeout})
-	var exitErr *exec.ExitError
 	switch {
 	case err == nil:
 		return true, nil
-	case errors.As(err, &exitErr) && exitErr.ExitCode() == 1:
+	case exitedWith(err, 1):
 		return false, nil
 	}
 	return false, err

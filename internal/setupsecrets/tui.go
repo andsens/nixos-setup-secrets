@@ -759,7 +759,7 @@ func (t *tui) fetchOne(name string) {
 
 // refreshTokens runs the same commands of the secrets and shows their tokens
 func (t *tui) refreshTokens(names ...string) {
-	tokens := t.config.sameTokens(t.logs, names)
+	tokens, _ := t.config.sameTokens(t.logs, names)
 	t.queue(func() {
 		for _, name := range names {
 			t.tokens[name] = tokens[name]

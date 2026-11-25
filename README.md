@@ -218,7 +218,13 @@ setup-secrets = {
 ```
 
 A secret without `same` always counts as changed, so the destinations that
-need it always run. The tokens are taken after storing, as a destination
+need it always run.
+
+`same` exits 0 with the token on stdout; an empty token is a token like
+any other. When it can't tell yet (a workload that is still starting), it
+exits 75, `EX_TEMPFAIL` of sysexits.h: the secret counts as changed and the
+command isn't retried. Any other exit is a failure, retried like `cmd`,
+after which the secret counts as changed too. The tokens are taken after storing, as a destination
 that writes what the source reads changes the token.
 
 setup-secrets keeps what it needs for this in `stateFile`

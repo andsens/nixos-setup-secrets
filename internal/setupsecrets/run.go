@@ -3,6 +3,7 @@ package setupsecrets
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,13 +17,21 @@ const maxBackoff = 30 * time.Second
 // sleep waits between attempts, a variable so the tests don't have to
 var sleep = time.Sleep
 
+// exitTempFail is EX_TEMPFAIL of sysexits.h, the exit status of a same command that can't tell yet
+const exitTempFail = 75
+
 // run runs script with bash and the given extra environment, prefixing each line it prints on stderr with prefix.
 // A failed attempt, a timeout included, is retried attempts.Retries times, after 1s, 2s, 4s and so on up to 30s.
 func run(log io.Writer, prefix, script string, env []string, attempts Attempts) ([]byte, error) {
+	return runUntil(log, prefix, script, env, attempts, func(error) bool { return false })
+}
+
+// runUntil is run, except that a failure for which final is true is returned without retrying
+func runUntil(log io.Writer, prefix, script string, env []string, attempts Attempts, final func(error) bool) ([]byte, error) {
 	backoff := time.Second
 	for attempt := 0; ; attempt++ {
 		out, err := runOnce(log, prefix, script, env, attempts.timeout)
-		if err == nil || attempt >= attempts.Retries {
+		if err == nil || final(err) || attempt >= attempts.Retries {
 			return out, err
 		}
 		fmt.Fprintf(log, "%s: Try %d of %d failed (%s), next in %s\n", prefix, attempt+1, attempts.Retries+1, err, backoff)
@@ -45,6 +54,12 @@ func runOnce(log io.Writer, prefix, script string, env []string, timeout time.Du
 		return out, fmt.Errorf("timed out after %s", timeout)
 	}
 	return out, err
+}
+
+// exitedWith is whether err is an exit of the command with status code
+func exitedWith(err error, code int) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == code
 }
 
 // prefixWriter writes each complete line it is given to w, prefixed with "prefix: "

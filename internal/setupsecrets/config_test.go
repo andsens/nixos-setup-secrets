@@ -259,6 +259,47 @@ func TestChangedOnly(t *testing.T) {
 	}
 }
 
+func TestSameCantTell(t *testing.T) {
+	noSleep(t)
+	dir := t.TempDir()
+	tries := filepath.Join(dir, "tries")
+	// Counts its runs, and can't tell until the file "ready" exists; then the token is empty, a token like any other
+	config := func() *Config {
+		c := testConfig(t, `{
+			"sources": {"LATER": {"cmd": "echo later", "same": "echo >>`+tries+`; [[ -e `+dir+`/ready ]] || exit 75"}},
+			"destinations": [{"logPrefix": "later", "requires": ["LATER"], "cmd": "true"}]
+		}`)
+		c.statePath = filepath.Join(dir, "state.json")
+		return c
+	}
+	if _, err := auto(t, config(), true); err != nil {
+		t.Fatal(err)
+	}
+	log, err := auto(t, config(), true)
+	if err != nil || !strings.Contains(log, "LATER: Same command can't tell yet") ||
+		!strings.Contains(log, "later: Runs, LATER same command can't tell yet") || strings.Contains(log, "LATER: Try") {
+		t.Errorf("can't tell: err %v\n%s", err, log)
+	}
+	state, _ := readState(filepath.Join(dir, "state.json"))
+	if _, ok := state.Sources["LATER"]; ok {
+		t.Errorf("a source that can't tell has a token in the state: %+v", state.Sources["LATER"])
+	}
+	// Each run plans and records once; no retries
+	if raw, _ := os.ReadFile(tries); strings.Count(string(raw), "\n") != 4 {
+		t.Errorf("same command ran %d times, want 4", strings.Count(string(raw), "\n"))
+	}
+
+	os.WriteFile(filepath.Join(dir, "ready"), nil, 0o600)
+	log, _ = auto(t, config(), true)
+	if !strings.Contains(log, "later: Runs, LATER changed") {
+		t.Errorf("first token: %s", log)
+	}
+	log, _ = auto(t, config(), true)
+	if !strings.Contains(log, "later: Unchanged") {
+		t.Errorf("an empty token counts as changed: %s", log)
+	}
+}
+
 func TestCleanup(t *testing.T) {
 	noSleep(t)
 	dir := t.TempDir()

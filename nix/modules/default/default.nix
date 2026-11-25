@@ -116,6 +116,11 @@ in
                   destination runs only when the command or token of one of its secrets, or its own command, changed
                   since it last stored, or when one of its `outputs` is gone. A source without it always counts as
                   changed.
+
+                  Exit 0 with the token on stdout; an empty token is a token like any other. Exit 75 (`EX_TEMPFAIL`
+                  of sysexits.h) when it can't tell yet, a workload still starting: the source counts as changed, and
+                  the command isn't retried. Any other exit is a failure, retried like `cmd`, after which the source
+                  counts as changed too.
                 '';
                 default = null;
               };

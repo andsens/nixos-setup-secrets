@@ -124,23 +124,30 @@ func destKey(dest *Destination, srcKeys map[string]string) string {
 	return sb.String()
 }
 
-// sameTokens runs the same commands of the sources and returns their tokens; a source without one, or whose command
-// failed, gets none
-func (config *Config) sameTokens(log io.Writer, names []string) map[string]string {
-	tokens := map[string]string{}
+// sameTokens runs the same commands of the sources and returns the tokens of those that exited 0, an empty one
+// included. For the others it returns why there is no token: the command can't tell yet (it exited with
+// exitTempFail, which isn't retried), or it failed. A source without a same command is in neither
+func (config *Config) sameTokens(log io.Writer, names []string) (tokens, unknown map[string]string) {
+	tokens, unknown = map[string]string{}, map[string]string{}
 	for _, name := range names {
 		src := config.Sources[name]
 		if src == nil || src.Cmd == "" || src.Same == "" {
 			continue
 		}
-		out, err := run(log, name, src.Same, nil, src.Attempts)
-		if err != nil {
+		cantTell := func(err error) bool { return exitedWith(err, exitTempFail) }
+		out, err := runUntil(log, name, src.Same, nil, src.Attempts, cantTell)
+		switch {
+		case err == nil:
+			tokens[name] = strings.TrimSpace(string(out))
+		case cantTell(err):
+			fmt.Fprintf(log, "%s: Same command can't tell yet\n", name)
+			unknown[name] = "same command can't tell yet"
+		default:
 			fmt.Fprintf(log, "%s: Same command failed: %s\n", name, err)
-			continue
+			unknown[name] = "same command failed"
 		}
-		tokens[name] = strings.TrimSpace(string(out))
 	}
-	return tokens
+	return tokens, unknown
 }
 
 // record keeps what the stored destinations wrote and the tokens of their secrets, taken after storing, as a
@@ -157,14 +164,19 @@ func (config *Config) record(log io.Writer, stored []*Destination) error {
 			}
 		}
 	}
-	tokens := config.sameTokens(log, names)
+	tokens, unknown := config.sameTokens(log, names)
 	now := time.Now().UTC().Truncate(time.Second)
 	return updateState(config.statePath, func(state *State) {
 		keys := map[string]string{}
 		for _, name := range names {
 			src := config.Sources[name]
 			keys[name] = sourceKey(src, tokens[name])
-			if src != nil && src.Cmd != "" {
+			switch {
+			case src == nil || src.Cmd == "":
+			case unknown[name] != "":
+				// No token to remember, so the next run counts it as changed
+				delete(state.Sources, name)
+			default:
 				state.Sources[name] = SourceState{Cmd: src.Cmd, Same: tokens[name]}
 			}
 		}

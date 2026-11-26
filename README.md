@@ -70,6 +70,29 @@ has no value, the destination is skipped. `wants` secrets are injected the
 same way when available, but don't block the destination if they're
 missing.
 
+## Testing
+
+A NixOS test or a test cluster has none of the services and accounts the
+sources fetch from. Give such a source a `test` command, and turn on
+`setup-secrets.testing` in the test's configuration: each source with a
+`test` fetches it in place of `cmd`, without retries, a source without `cmd`
+included. Sources a test can fetch for real (a generated value, a Secret in
+the test's own cluster) need none.
+
+```nix
+setup-secrets.sources.DNS_API_KEY = {
+  cmd = "op read op://vault/dns/api-key";
+  test = "echo test-api-key";
+};
+# In the test's node
+setup-secrets.testing = true;
+# A test that checks how the real command fails keeps it
+setup-secrets.sources.DNS_API_KEY.testing = false;
+```
+
+`testing` is built into the script, not a flag of it, so a machine without
+it never writes a test value.
+
 ## Running it
 
 ```

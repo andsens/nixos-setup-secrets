@@ -545,6 +545,11 @@ destination runs only when the command or token of one of its secrets, or its ow
 since it last stored, or when one of its ` outputs ` is gone\. A source without it always counts as
 changed\.
 
+Exit 0 with the token on stdout; an empty token is a token like any other\. Exit 75 (` EX_TEMPFAIL `
+of sysexits\.h) when it can’t tell yet, a workload still starting: the source counts as changed, and
+the command isn’t retried\. Any other exit is a failure, retried like ` cmd `, after which the source
+counts as changed too\.
+
 
 
 *Type:*
@@ -584,6 +589,65 @@ null or string
 
 ```nix
 null
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
+## setup-secrets\.sources\.\<name>\.test
+
+
+
+Command that prints a stand-in for the secret, fetched in place of ` cmd ` where ` testing ` is on: for a
+secret from a service or account a test doesn’t have\. Also for a source without ` cmd `, which then
+needs no one to type it in\. A source that a test can fetch for real (a generated value, a Secret in
+the test’s own cluster) needs none\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"echo test-api-key"
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
+## setup-secrets\.sources\.\<name>\.testing
+
+
+
+Whether this source fetches its ` test ` value in place of ` cmd `\. Set it to keep the real ` cmd ` in a test\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+config.setup-secrets.testing
 ```
 
 *Declared by:*
@@ -632,6 +696,40 @@ string
 
 ```nix
 "/var/lib/setup-secrets/state.json"
+```
+
+*Declared by:*
+ - [nix/modules/default/default\.nix](https://github.com/andsens/nixos-setup-secrets/blob/main/nix/modules/default/default.nix)
+
+
+
+## setup-secrets\.testing
+
+
+
+Whether to enable the sources’ test values: each source with a ` test ` fetches it in place of ` cmd `, unless its own ` testing ` is
+off\. For NixOS tests and test clusters, where the services a source reaches don’t exist\. It is built into the
+script, so a machine without it never writes a test value\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
+*Example:*
+
+```nix
+true
 ```
 
 *Declared by:*

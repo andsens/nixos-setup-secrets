@@ -14,7 +14,13 @@ let
     export NIXOS_SETUP_SECRETS_STATE=${lib.escapeShellArg cfg.stateFile}
     export NIXOS_SETUP_SECRETS_CONFIG=$(${lib.getExe' pkgs.coreutils "cat"} <<'EOF'
     ${builtins.toJSON {
-      sources = lib.filterAttrs (name: { enable, ... }: enable) cfg.sources;
+      sources = lib.mapAttrs (
+        _: source:
+        removeAttrs (fetched source) [
+          "test"
+          "testing"
+        ]
+      ) (lib.filterAttrs (name: { enable, ... }: enable) cfg.sources);
       destinations = enabledDestinations;
       inherit (cfg) outputKinds;
     }}
@@ -35,6 +41,17 @@ let
     };
   };
   enabledDestinations = lib.filter ({ enable, ... }: enable) cfg.destinations;
+  # A source in a test fetches its test value, at once
+  fetched =
+    source:
+    if source.testing && source.test != null then
+      source
+      // {
+        cmd = source.test;
+        retries = 0;
+      }
+    else
+      source;
   # Every group a destination is in, and every group declared in `groups`
   groupNames = lib.unique (
     map ({ group, ... }: group) enabledDestinations ++ lib.attrNames cfg.groups
@@ -75,6 +92,10 @@ in
       );
       default = { };
     };
+    testing = lib.mkEnableOption ''
+      the sources' test values: each source with a `test` fetches it in place of `cmd`, unless its own `testing` is
+      off. For NixOS tests and test clusters, where the services a source reaches don't exist. It is built into the
+      script, so a machine without it never writes a test value'';
     sources = lib.mkOption {
       description = "Map of secrets. <name> becomes the secret name.";
       type = lib.types.attrsOf (
@@ -82,6 +103,23 @@ in
           { name, ... }:
           {
             options = {
+              test = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                description = ''
+                  Command that prints a stand-in for the secret, fetched in place of `cmd` where `testing` is on: for a
+                  secret from a service or account a test doesn't have. Also for a source without `cmd`, which then
+                  needs no one to type it in. A source that a test can fetch for real (a generated value, a Secret in
+                  the test's own cluster) needs none.
+                '';
+                default = null;
+                example = "echo test-api-key";
+              };
+              testing = lib.mkOption {
+                type = lib.types.bool;
+                description = "Whether this source fetches its `test` value in place of `cmd`. Set it to keep the real `cmd` in a test.";
+                default = cfg.testing;
+                defaultText = lib.literalExpression "config.setup-secrets.testing";
+              };
               enable = lib.mkOption {
                 description = "Whether to enable this secret source";
                 type = lib.types.bool;
